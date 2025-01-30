@@ -1,4 +1,5 @@
 import sys
+import csv
 import re
 import requests
 from urllib.parse import quote
@@ -9,12 +10,399 @@ import pyttsx3
 from PyQt5.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 from PyQt5 import QtWidgets, QtCore, QtWebEngineWidgets, QtGui
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage, QWebEngineProfile
-from PyQt5.QtCore import QUrl, QTimer, QFileInfo, QDir, pyqtSignal, QThread, Qt, QRunnable, QThreadPool
-from PyQt5.QtWidgets import QWidget, QCompleter, QMainWindow, QTabWidget, QLabel, QAction, QFileDialog, QStyleFactory, QListWidgetItem, QProgressBar, QFileDialog, QMenu, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QGridLayout
+from PyQt5.QtCore import QUrl, QTimer, QFileInfo, QDir, pyqtSignal, QThread, Qt, QRunnable, QThreadPool, QEasingCurve, QPropertyAnimation, QPoint, Qt, QUrlQuery, QDateTime
+from PyQt5.QtWidgets import QWidget, QCompleter, QMainWindow, QTabWidget, QLabel, QAction, QFileDialog, QStyleFactory, QListWidgetItem, QProgressBar, QFileDialog, QMenu, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QGridLayout, QApplication
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PyQt5.QtGui import QIcon, QCursor
 from datetime import datetime, timedelta
 from functools import partial
+from PyQt5.QtWebEngineWidgets import QWebEngineSettings
+
+class DownloadItemWidget(QtWidgets.QWidget):
+    def __init__(self, download_info):
+        super().__init__()
+        self.download_info = download_info
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QtWidgets.QHBoxLayout()
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(16)
+        
+        self.icon = QtWidgets.QLabel()
+        pixmap = QtGui.QPixmap(":/icons/file.svg").scaled(24, 24, 
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        self.icon.setPixmap(pixmap)
+        layout.addWidget(self.icon)
+        
+        content_layout = QtWidgets.QVBoxLayout()
+        content_layout.setSpacing(4)
+        
+        self.filename = QtWidgets.QLabel()
+        self.set_elided_text(self.filename, self.download_info['file_name'], 300)
+        
+        self.status_label = QtWidgets.QLabel()
+        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.insertWidget(0, self.status_label)
+        
+        content_layout.addWidget(self.filename)
+        content_layout.addWidget(self.status)
+        layout.addLayout(content_layout)
+        
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                height: 6px;
+                background: #e9ecef;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background: #4dabf7;
+                border-radius: 3px;
+            }
+        """)
+        self.progress.setValue(0)
+        layout.addWidget(self.progress, 1)
+        
+        control_layout = QtWidgets.QHBoxLayout()
+        control_layout.setSpacing(8)
+        
+        self.pause_btn = QtWidgets.QPushButton()
+        self.pause_btn.setIcon(QtGui.QIcon(":/icons/pause.svg"))
+        self.pause_btn.setStyleSheet("padding: 4px; border-radius: 4px;")
+        self.pause_btn.clicked.connect(self.toggle_pause)
+        
+        self.cancel_btn = QtWidgets.QPushButton()
+        self.cancel_btn.setIcon(QtGui.QIcon(":/icons/close.svg"))
+        self.cancel_btn.setStyleSheet("padding: 4px; border-radius: 4px;")
+        self.cancel_btn.clicked.connect(self.cancel_download)
+        
+        control_layout.addWidget(self.pause_btn)
+        control_layout.addWidget(self.cancel_btn)
+        layout.addLayout(control_layout)
+        
+        self.setLayout(layout)
+        self.update_state()
+
+    def set_elided_text(self, label, text, width):
+        metrics = QtGui.QFontMetrics(label.font())
+        elided = metrics.elidedText(text, QtCore.Qt.ElideRight, width)
+        label.setText(elided)
+        label.setToolTip(text)
+        
+    def update_progress(self, received, total):
+        progress = int((received / total) * 100) if total > 0 else 0
+        self.progress.setValue(progress)
+        self.status.setText(f"{progress}% • {self.format_speed(received)}")
+        
+    def format_speed(self, bytes_received):
+        return f"{bytes_received//1024} KB/s"
+        
+    def toggle_pause(self):
+        pass
+        
+    def cancel_download(self):
+        pass
+        
+    def update_state(self):
+        state = self.download_info.get('state', 'active')
+        states = {
+            'active': {'color': '#4dabf7', 'icon': ':/icons/download.svg'},
+            'paused': {'color': '#868e96', 'icon': ':/icons/pause.svg'},
+            'completed': {'color': '#2b8a3e', 'icon': ':/icons/check.svg'},
+            'error': {'color': '#c92a2a', 'icon': ':/icons/error.svg'}
+        }
+        style = states.get(state, states['active'])
+        self.icon.setStyleSheet(f"color: {style['color']};")
+        self.status.setStyleSheet(f"color: {style['color']};")
+
+class DownloadManager(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            DownloadManager {
+                background-color: #f8f9fa;
+            }
+            QListWidget {
+                background: white;
+                border: 1px solid #e9ecef;
+                border-radius: 8px;
+                padding: 4px;
+            }
+        """)
+        self.init_ui()
+        self.downloads = {}
+        self.network_manager = QNetworkAccessManager()
+        self.network_manager.finished.connect(self.download_finished)
+
+    def init_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(24, 16, 24, 24)
+        layout.setSpacing(16)
+        
+        # Header
+        header = QtWidgets.QLabel("Downloads")
+        header.setStyleSheet("""
+            font-size: 24px;
+            font-weight: 700;
+            color: #212529;
+            padding-bottom: 8px;
+        """)
+        header.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(header)
+        
+        # Downloads List
+        self.download_list = QtWidgets.QListWidget()
+        self.download_list.setStyleSheet("""
+            QListWidget::item {
+                border-bottom: 1px solid #e9ecef;
+                padding: 4px;
+            }
+            QListWidget::item:hover {
+                background-color: #f8f9fa;
+            }
+        """)
+        layout.addWidget(self.download_list)
+        
+        # Empty State
+        self.empty_state = QtWidgets.QWidget()
+        empty_layout = QtWidgets.QVBoxLayout()
+        empty_layout.setAlignment(QtCore.Qt.AlignCenter)
+        
+        icon = QtWidgets.QLabel()
+        pixmap = QtGui.QPixmap(":/icons/download.svg").scaled(64, 64, 
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        icon.setPixmap(pixmap)
+        empty_layout.addWidget(icon)
+        
+        text = QtWidgets.QLabel("No active or completed downloads")
+        text.setStyleSheet("""
+            font-size: 16px;
+            color: #868e96;
+            padding-top: 16px;
+        """)
+        empty_layout.addWidget(text)
+        self.empty_state.setLayout(empty_layout)
+        layout.addWidget(self.empty_state)
+        
+    def add_download(self, url):
+        file_info = QFileInfo(url.path())
+        file_name = file_info.fileName()
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save File", QDir.homePath() + "/Downloads/" + file_name
+        )
+        
+        if save_path:
+            request = QNetworkRequest(QUrl(url))
+            reply = self.network_manager.get(request)
+            
+            item = QtWidgets.QListWidgetItem()
+            widget = DownloadItemWidget({
+                'url': url.toString(),
+                'file_name': file_name,
+                'path': save_path,
+                'state': 'active'
+            })
+            item.setSizeHint(widget.sizeHint())
+            
+            self.download_list.addItem(item)
+            self.download_list.setItemWidget(item, widget)
+            self.downloads[reply] = {
+                'item': item,
+                'widget': widget,
+                'file': open(save_path, 'wb')
+            }
+            reply.downloadProgress.connect(
+                lambda rec, tot, r=reply: self.update_progress(rec, tot, r)
+            )
+            
+    def update_progress(self, received, total, reply):
+        download = self.downloads.get(reply)
+        if download:
+            download['widget'].update_progress(received, total)
+            
+    def download_finished(self, reply):
+        download = self.downloads.get(reply)
+        if download:
+            download['file'].close()
+            self.downloads.pop(reply)
+            download['widget'].download_info['state'] = 'completed'
+            download['widget'].update_state()
+
+class AboutDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About PyBrowse")
+        self.setFixedSize(500, 400)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', sans-serif;
+            }
+
+            QLabel {
+                font-size: 14px;
+                color: #495057;
+                margin: 4px 0;
+            }
+
+            QLabel#title {
+                font-size: 28px;
+                font-weight: 600;
+                color: #212529;
+            }
+
+            QLabel#version {
+                font-size: 16px;
+                color: #6c757d;
+            }
+            
+            QLabel#links {
+                margin-top: 12px;
+            }
+
+            QLabel {
+                font-size: 14px;
+                color: #495057;
+                margin: 4px 0;
+            }
+
+            QTextBrowser {
+                background: transparent;
+                border: none;
+                color: #495057;
+                font-size: 14px;
+                text-align: center;
+            }
+
+            QPushButton {
+                background: #e9ecef;
+                border: 1px solid #dee2e6;
+                color: #212529;
+                padding: 8px 32px;
+                min-width: 100px;
+            }
+
+            QPushButton:hover {
+                background: #dee2e6;
+            }
+
+            QPushButton:pressed {
+                background: #ced4da;
+            }
+
+            QLabel#build_number {
+                font-size: 12px;
+                color: #868e96;
+                padding: 8px 0;
+            }
+            QFrame#separator {
+                color: #dee2e6;
+            }
+        """)
+
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QtWidgets.QVBoxLayout()
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        main_layout.setSpacing(15)
+
+        icon = QtWidgets.QLabel()
+        pixmap = QtGui.QPixmap(":/icons/app_icon.png").scaled(72, 72, 
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        icon.setPixmap(pixmap)
+        icon.setAlignment(QtCore.Qt.AlignCenter)
+
+        title = QtWidgets.QLabel("PyBrowse")
+        title.setObjectName("title")
+        title.setAlignment(QtCore.Qt.AlignCenter)
+
+        version = QtWidgets.QLabel("Version 0.3.0")
+        version.setObjectName("version")
+        version.setAlignment(QtCore.Qt.AlignCenter)
+
+        desc = QtWidgets.QTextBrowser()
+        desc.setPlainText(
+            "A browser written in Python using the PyQt5 libraries. Part of the PySuite group of apps.\n\n"
+            "© 2024 - 2025 Tay Rake\n"
+            "GPL-3.0 License"
+        )
+        desc.setAlignment(QtCore.Qt.AlignCenter)
+        desc.setFixedHeight(80)
+
+        links_layout = QtWidgets.QVBoxLayout()
+        links_layout.addWidget(self.create_centered_link("https://github.com/DivinityCube/PyBrowse", "GitHub Repository"))
+        links_layout.setSpacing(10)
+
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setObjectName("separator")
+        main_layout.addWidget(separator)
+
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.setContentsMargins(0, 10, 0, 0)
+
+        build_number = QtWidgets.QLabel("Build 0.3.0.200 [Stable Release]\n30-01-2025") # the 4th number is the browser build number; it's to keep track of the amount of changes in between releases. build number resets to 1 after every new release development build (e.g. this release, 0.3.0, will still have a build number like 200 upon full release, it'll only reset in the dev build of 0.3.1)
+                                                                                        # [DEV] is for development builds, [RC] is for release candidates, and nothing is for stable releases (although the build number will still be present for a full release)
+        build_number.setObjectName("build_number")                                      # we'd usually have 2 release candidates on average, but it can be more or less depending on the amount of changes
+        build_number.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()
+        btn = QtWidgets.QPushButton("OK")
+        btn.clicked.connect(self.accept)
+        btn_layout.addWidget(btn)
+
+        bottom_layout.addWidget(build_number)
+        bottom_layout.addLayout(btn_layout)
+
+        main_layout.addWidget(icon)
+        main_layout.addWidget(title)
+        main_layout.addWidget(version)
+        main_layout.addWidget(desc)
+        main_layout.addLayout(links_layout)
+        main_layout.addLayout(btn_layout)
+        main_layout.addLayout(bottom_layout)
+
+        self.setLayout(main_layout)
+
+    def create_centered_link(self, url, text):
+        link = QtWidgets.QLabel(f'<a href="{url}" style="color: #0078d4; text-decoration: none;">{text}</a>')
+        link.setAlignment(QtCore.Qt.AlignCenter)
+        link.linkActivated.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)))
+        return link
+
+class StyledCheckBox(QtWidgets.QCheckBox):
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        
+        text = self.text()
+        font = self.font()
+        text_width = self.fontMetrics().horizontalAdvance(text)
+        box_size = 18
+        spacing = 8
+        
+        box_rect = QtCore.QRect(0, (self.height()-box_size)//2, box_size, box_size)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("#ffffff")))
+        painter.setPen(QtGui.QPen(QtGui.QColor("#dee2e6"), 1))
+        painter.drawRect(box_rect)
+        
+        if self.isChecked():
+            painter.setPen(QtGui.QPen(QtGui.QColor("#0078d4"), 2))
+            painter.drawLine(4, self.height()//2 + 1, 7, self.height()//2 + 4)
+            painter.drawLine(7, self.height()//2 + 4, 14, self.height()//2 - 3)
+        
+        painter.setFont(font)
+        painter.setPen(QtGui.QPen(self.palette().text().color()))
+        text_rect = QtCore.QRect(box_size + spacing, 0, text_width, self.height())
+        painter.drawText(text_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, text)
+
+    def sizeHint(self):
+        text_width = self.fontMetrics().horizontalAdvance(self.text())
+        return QtCore.QSize(18 + 8 + text_width + 10, 24)
 
 class CustomNewTabPage(QWidget):
     def __init__(self, main_window, is_private=False):
@@ -51,14 +439,21 @@ class CustomNewTabPage(QWidget):
         if not self.is_private:
             weather_label = QLabel("Weather: Placeholder")
             layout.addWidget(weather_label)
-            news_label = QLabel("Latest News: PyBrowse 0.2.5 Released!")
+            news_label = QLabel("Latest News: PyBrowse 0.3.0 Released!")
             layout.addWidget(news_label)
 
         self.setLayout(layout)
 
     def perform_search(self):
         query = self.search_bar.text()
-        url = QUrl(f"https://www.google.com/search?q={query}")
+        if not query:
+            return
+        
+        if re.match(r'^https?://', query):
+            url = QUrl(query)
+        else:
+            url = QUrl(f"https://www.google.com/search?q={query}")
+        
         self.main_window.add_new_tab(url.toString(), is_private=self.is_private)
 
     def open_url(self, url):
@@ -79,57 +474,190 @@ class TextToSpeechEngine(QRunnable):
 class AccessibilityPage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet("""
+            AccessibilityPage {
+                background-color: #f8f9fa;
+            }
+            
+            QLabel#section_title {
+                font-size: 18px;
+                font-weight: 600;
+                color: #212529;
+                padding: 12px 0 4px 0;
+            }
+            
+            QCheckBox {
+                spacing: 12px;
+                padding: 8px 0;
+                font-size: 14px;
+            }
+            
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            
+            QLabel {
+                font-size: 14px;
+                color: #495057;
+                line-height: 1.4;
+                padding: 4px 0;
+            }
+            
+            QLabel[type="feature"] {
+                padding-left: 24px;
+                background: url(:/icons/bullet.svg) left center no-repeat;
+            }
+        """)
         self.init_ui()
 
     def init_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        title = QtWidgets.QLabel("Accessibility Features")
-        title.setAlignment(QtCore.Qt.AlignCenter)
-        title.setStyleSheet("font-size: 24px; font-weight: bold;")
-        layout.addWidget(title)
-        self.high_contrast_checkbox = QtWidgets.QCheckBox("High Contrast Mode")
-        self.high_contrast_checkbox.stateChanged.connect(self.toggle_high_contrast)
-        layout.addWidget(self.high_contrast_checkbox)
-        self.tts_checkbox = QtWidgets.QCheckBox("Enable Text-to-Speech")
-        self.tts_checkbox.stateChanged.connect(self.toggle_tts)
-        layout.addWidget(self.tts_checkbox)
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(24, 16, 24, 24)
+        main_layout.setSpacing(8)
+
+        # Header Section
+        header = QtWidgets.QLabel("Accessibility Features")
+        header.setAlignment(QtCore.Qt.AlignCenter)
+        header.setStyleSheet("""
+            font-size: 24px;
+            font-weight: 700;
+            color: #212529;
+            padding-bottom: 16px;
+        """)
+        main_layout.addWidget(header)
+
+        # Toggles Section
+        toggles_layout = QtWidgets.QVBoxLayout()
+        self.high_contrast_toggle = self.create_toggle("High Contrast Mode", ":/icons/contrast.svg")
+        self.tts_toggle = self.create_toggle("Text-to-Speech", ":/icons/tts.svg")
+        toggles_layout.addWidget(self.high_contrast_toggle)
+        toggles_layout.addWidget(self.tts_toggle)
+        main_layout.addLayout(toggles_layout)
+
+        # Features Scroll Area
         scroll_area = QtWidgets.QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_widget = QtWidgets.QWidget()
-        scroll_layout = QtWidgets.QVBoxLayout(scroll_widget)
-        self.add_section(scroll_layout, "Keyboard Shortcuts", [
-            ("Ctrl + T", "Open new tab"),
-            ("Ctrl + W", "Close current tab"),
-            ("Ctrl + L", "Focus address bar"),
-            ("F11", "Toggle fullscreen"),
-            ("Esc", "Exit fullscreen"),
-        ])
+        scroll_content = QtWidgets.QWidget()
+        scroll_layout = QtWidgets.QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 12, 0)
+        scroll_layout.setSpacing(16)
 
-        self.add_section(scroll_layout, "Text Zoom", [
-            ("To increase or decrease the text size:"),
-            ("1. Press Ctrl and scroll the mouse wheel"),
-            ("2. Or use Ctrl + Plus (+) to zoom in"),
-            ("3. Use Ctrl + Minus (-) to zoom out"),
-            ("4. Use Ctrl + 0 to reset zoom"),
-        ])
+        # Feature Sections
+        self.add_feature_section(scroll_layout, "Navigation",
+                                ["Keyboard-first navigation design",
+                                 "Focus indicators for interactive elements",
+                                 "Semantic HTML structure support"])
+                                 
+        self.add_feature_section(scroll_layout, "Visual Adjustments",
+                                ["Dynamic text scaling (Ctrl + Mouse Wheel)",
+                                 "High contrast color schemes",
+                                 "Reduced motion preferences"])
+                                 
+        self.add_feature_section(scroll_layout, "Compatibility",
+                                ["Screen reader optimized (NVDA, JAWS, VoiceOver)",
+                                 "Braille display support",
+                                 "Keyboard navigation profiles"])
 
-        self.add_section(scroll_layout, "Reader Mode", [
-            ("1. Click the 'Reader Mode' button in the toolbar"),
-            ("2. This simplifies the page layout for easier reading"),
-        ])
+        self.add_shortcut_section(scroll_layout)
 
-        self.add_section(scroll_layout, "Private Browsing", [
-            ("1. Toggle 'Private Mode' in the navigation bar"),
-            ("2. Your browsing history and cookies won't be saved in this mode"),
-        ])
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area)
+    
+    def create_toggle(self, text, icon_path):
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(12, 8, 12, 8)
+        
+        icon = QtWidgets.QLabel()
+        pixmap = QtGui.QPixmap(icon_path).scaled(24, 24, 
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        icon.setPixmap(pixmap)
+        
+        label = QtWidgets.QLabel(text)
+        label.setStyleSheet("font-size: 15px; color: #212529;")
+        
+        toggle = StyledCheckBox()
+        toggle.setStyleSheet("""
+            QCheckBox::indicator { width: 48px; height: 28px; }
+            QCheckBox::indicator:unchecked { image: url(:/icons/toggle_off.svg); }
+            QCheckBox::indicator:checked { image: url(:/icons/toggle_on.svg); }
+        """)
+        
+        layout.addWidget(icon)
+        layout.addWidget(label)
+        layout.addStretch()
+        layout.addWidget(toggle)
+        
+        container.setStyleSheet("""
+            background-color: white;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        """)
+        
+        return container
 
-        self.add_section(scroll_layout, "Screen Reader Compatibility", [
-            "PyBrowse is compatible with most screen readers.",
-            "Please ensure your screen reader is up to date for the best experience.",
-        ])
-
-        scroll_area.setWidget(scroll_widget)
-        layout.addWidget(scroll_area)
+    def add_feature_section(self, layout, title, items):
+        section = QtWidgets.QGroupBox(title)
+        section.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #e9ecef;
+                border-radius: 8px;
+                padding: 16px;
+                margin-top: 8px;
+                background: white;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                color: #212529;
+                font-weight: 600;
+            }
+        """)
+        
+        section_layout = QtWidgets.QVBoxLayout()
+        for item in items:
+            label = QtWidgets.QLabel(item)
+            label.setProperty("type", "feature")
+            section_layout.addWidget(label)
+        
+        section.setLayout(section_layout)
+        layout.addWidget(section)
+    
+    def add_shortcut_section(self, layout):
+        section = QtWidgets.QWidget()
+        section.setStyleSheet("background: white; border-radius: 8px; border: 1px solid #e9ecef;")
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(16, 16, 16, 16)
+        
+        shortcuts = [
+            ("Ctrl + Plus", "Zoom In"),
+            ("Ctrl + Minus", "Zoom Out"),
+            ("Ctrl + 0", "Reset Zoom"),
+            ("F11", "Fullscreen Toggle"),
+            ("Alt + Shift + S", "Screen Reader Toggle"),
+            ("Ctrl + Alt + D", "Developer Console")
+        ]
+        
+        for i, (keys, desc) in enumerate(shortcuts):
+            key_label = QtWidgets.QLabel(keys)
+            key_label.setStyleSheet("""
+                font-family: 'Courier New';
+                color: #495057;
+                padding: 4px 8px;
+                background: #f1f3f5;
+                border-radius: 4px;
+            """)
+            
+            desc_label = QtWidgets.QLabel(desc)
+            desc_label.setStyleSheet("color: #495057;")
+            
+            grid.addWidget(key_label, i//2, 0)
+            grid.addWidget(desc_label, i//2, 1)
+        
+        section.setLayout(grid)
+        layout.addWidget(section)
     
     def toggle_high_contrast(self, state):
         if state == QtCore.Qt.Checked:
@@ -313,26 +841,213 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
 class ScrollableTabBar(QtWidgets.QTabBar):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setMouseTracking(True)
+        self.hovered_close_index = -1
+        self.pressed_close = False
+        self.close_icon = self.create_close_icon()
         self.setDrawBase(False)
         self.setElideMode(QtCore.Qt.ElideRight)
         self.setUsesScrollButtons(True)
         self.setMovable(True)
         self.setExpanding(False)
+        self._min_tab_width = 120
+        self._max_tab_width = 250
+        self.settings = QtCore.QSettings("PyBrowse", "PyBrowse")
+        self.apply_style_settings()
+        self.settings.sync()
+        self.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.setStyleSheet("""
+            QTabBar {
+                background: transparent;
+                margin: 0;  /* Remove margins */
+                height: 30px;  /* Fixed height */
+            }
+            QTabBar::tab {
+                background: #e9ecef;
+                border: 1px solid #dee2e6;
+                border-bottom: none;
+                border-radius: 4px 4px 0 0;
+                padding: 8px 16px;
+                margin: 0 2px;
+                font-weight: 500;
+                color: #495057;
+            }
+            QTabBar::tab:selected {
+                background: #f8f9fa;
+                color: #212529;
+                border-bottom: 1px solid white; /* Hide lower border */
+            }
+            QTabBar::tab:hover {
+                background: #f8f9fa;
+            }
+        """)
+        self.shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+        self.shadow.setBlurRadius(4)
+        self.shadow.setColor(QtGui.QColor(0, 0, 0, 10))
+        self.shadow.setOffset(0, 2)
+        self.setGraphicsEffect(self.shadow)
+    
+    def create_close_icon(self):
+        pixmap = QtGui.QPixmap(16, 16)
+        pixmap.fill(QtCore.Qt.transparent)
+        
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        pen = QtGui.QPen(self.palette().text().color())
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        
+        painter.drawLine(4, 4, 12, 12)
+        painter.drawLine(12, 4, 4, 12)
+        painter.end()
+        
+        return QtGui.QIcon(pixmap)
+
+    def tabLayoutChange(self):
+        super().tabLayoutChange()
+        self.updateGeometry()
+    
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            close_rect = QtCore.QRect(
+                rect.right() - 24,  # Adjusted positioning
+                rect.center().y() - 6,
+                16,
+                16
+            )
+            
+            # Hover/pressed state
+            if index == self.hovered_close_index:
+                painter.setBrush(QtGui.QColor(0, 0, 0, 20 if not self.pressed_close else 30))
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.drawEllipse(close_rect.center(), 8, 8)
+            
+            # X icon
+            pen = QtGui.QPen(self.palette().text().color())
+            pen.setWidthF(1.8)
+            painter.setPen(pen)
+            
+            offset = 3
+            painter.drawLine(
+                close_rect.center().x() - offset,
+                close_rect.center().y() - offset,
+                close_rect.center().x() + offset,
+                close_rect.center().y() + offset
+            )
+            painter.drawLine(
+                close_rect.center().x() + offset,
+                close_rect.center().y() - offset,
+                close_rect.center().x() - offset,
+                close_rect.center().y() + offset
+            )
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        prev_hover = self.hovered_close_index
+        self.hovered_close_index = -1
+        
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            close_rect = QtCore.QRect(
+                rect.right() - 24,
+                rect.center().y() - 6,
+                16,
+                16
+            )
+            if close_rect.contains(event.pos()):
+                self.hovered_close_index = index
+                break
+                
+        if prev_hover != self.hovered_close_index:
+            self.update()
+    
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.pressed_close = self.hovered_close_index != -1
+        super().mousePressEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        if self.pressed_close and self.hovered_close_index != -1:
+            self.tabCloseRequested.emit(self.hovered_close_index)
+        self.pressed_close = False
+        super().mouseReleaseEvent(event)
+
+    def apply_style_settings(self):
+        experimental_style = self.settings.value("experimental/tab_style", False, bool)
+    
+        if experimental_style:
+            self.setStyleSheet("""
+            QTabBar {
+                background: transparent;
+                margin: 0;
+            }
+                
+            QTabBar::tab {
+                background: #f1f3f5;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                margin: 4px 2px;
+                color: #495057;
+                font-weight: 500;
+                min-width: 120px;
+                max-width: 200px;
+            }
+                
+            QTabBar::tab:selected {
+                background: #e9ecef;
+                color: #212529;
+            }
+                
+            QTabBar::tab:hover {
+                background: #dee2e6;
+            }
+                
+            QTabBar::close-button {
+                image: none;
+                subcontrol-origin: padding;
+                subcontrol-position: right;
+            }  
+            """)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
+        else:
+            self.setStyleSheet("")
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
 
     def tabSizeHint(self, index):
-        size = super().tabSizeHint(index)
-        if self.count() > 0:
-            available_width = self.width()
-            total_width = sum(self.tabRect(i).width() for i in range(self.count()))
-            if total_width > available_width:
-                return size
-            else:
-                extra_width = (available_width - total_width) // self.count()
-                return QtCore.QSize(size.width() + extra_width, size.height())
-        return size
+        # Calculate available width minus scroll buttons if needed
+        available_width = self.width() - 20  # Account for scroll buttons
+        tab_count = max(1, self.count())
+        
+        # Calculate ideal width based on available space
+        ideal_width = available_width / tab_count
+        ideal_width = max(self._min_tab_width, 
+                        min(ideal_width, self._max_tab_width))
+        
+        # Check if we actually need scroll buttons
+        if (ideal_width * tab_count) <= available_width:
+            # Expand tabs to fill available space
+            return QtCore.QSize(
+                int(available_width / tab_count),
+                super().tabSizeHint(index).height()
+            )
+        else:
+            # Use consistent minimum width with scroll
+            return QtCore.QSize(self._min_tab_width, 
+                              super().tabSizeHint(index).height())
     
     def minimumTabSizeHint(self, index):
-        return QtCore.QSize(50, super().minimumTabSizeHint(index).height())
+        return QtCore.QSize(self._min_tab_width, 
+                          super().minimumTabSizeHint(index).height())
 
 class TabWidget(QtWidgets.QTabWidget):
     def __init__(self, parent=None):
@@ -342,6 +1057,22 @@ class TabWidget(QtWidgets.QTabWidget):
         self.setTabsClosable(True)
         self.tabCloseRequested.connect(self.close_tab)
         self.overflow_menu = QtWidgets.QMenu(self)
+        self.setDocumentMode(True)
+        self.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                margin: 0;
+                padding: 0;
+            }
+            
+            QTabWidget::tab-bar {
+                alignment: left;
+            }
+        """)
+    
+    def update_tab_style(self, key):
+        if key == "experimental/tab_style":
+            self.tabBar().apply_style_settings()
 
     def close_tab(self, index):
         if self.count() > 1:
@@ -362,88 +1093,34 @@ class CustomWebEnginePage(QtWebEngineWidgets.QWebEnginePage):
     def javaScriptConsoleMessage(self, level, message, line, source):
         self.console_message.emit(f"Console: {message} (line: {line}, source: {source})")
 
-class DebugConsole(QtWidgets.QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.layout = QtWidgets.QVBoxLayout(self)
-        self.console_output = QtWidgets.QTextEdit(self)
-        self.console_output.setReadOnly(True)
-        self.layout.addWidget(self.console_output)
-        input_layout = QtWidgets.QHBoxLayout()
-        self.input_line = QtWidgets.QLineEdit(self)
-        self.execute_button = QtWidgets.QPushButton("Execute", self)
-        input_layout.addWidget(self.input_line)
-        input_layout.addWidget(self.execute_button)
-        self.layout.addLayout(input_layout)
-        self.input_line.returnPressed.connect(self.execute_command)
-        self.execute_button.clicked.connect(self.execute_command)
-        actions_layout = QtWidgets.QHBoxLayout()
-        self.clear_button = QtWidgets.QPushButton("Clear Console", self)
-        self.get_dom_button = QtWidgets.QPushButton("Get DOM", self)
-        self.get_cookies_button = QtWidgets.QPushButton("Get Cookies", self)
-        actions_layout.addWidget(self.clear_button)
-        actions_layout.addWidget(self.get_dom_button)
-        actions_layout.addWidget(self.get_cookies_button)
-        self.layout.addLayout(actions_layout)
-        self.clear_button.clicked.connect(self.clear_console)
-        self.get_dom_button.clicked.connect(lambda: self.execute_command("document.documentElement.outerHTML"))
-        self.get_cookies_button.clicked.connect(lambda: self.execute_command("document.cookie"))
-        
-    def log(self, message):
-        self.console_output.append(message)
-        
-    def execute_command(self, command=None):
-        if command is None:
-            command = self.input_line.text()
-            self.input_line.clear()
-        self.log(f"> {command}")
-        
-        main_window = self.get_main_window()
-        if main_window and hasattr(main_window, 'tabs'):
-            current_tab = main_window.tabs.currentWidget()
-            if isinstance(current_tab, BrowserTab):
-                current_tab.page().runJavaScript(command, self.handle_result)
-        else:
-            self.log("Error: Unable to find the current browser tab.")
-        
-    def handle_result(self, result):
-        if result is not None:
-            self.log(str(result))
-        
-    def clear_console(self):
-        self.console_output.clear()
-        
-    def get_main_window(self):
-        parent = self.parent()
-        while parent is not None:
-            if isinstance(parent, PyBrowse):
-                return parent
-            parent = parent.parent()
-        return None
-
-
 class BrowserTab(QWebEngineView):
     def __init__(self, url="https://www.google.com", profile=None, parent=None):
         super().__init__(parent)
-        self.ad_blocker = AdBlocker(self)
-        self.profile = profile or QWebEngineProfile.defaultProfile()
-        self._page = QWebEnginePage(self.profile, self)
-        self.profile.setUrlRequestInterceptor(self.ad_blocker)
-        self.setPage(self._page)
-        self.custom_page = CustomWebEnginePage(self)
-        self.web_page = QWebEnginePage(self.profile, self)
-        self.setUrl(QUrl(url))
         self.reader_mode_active = False
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
-        self.custom_page.console_message.connect(self.handle_console_message)
-        self._page.loadFinished.connect(self.page_loaded)
-        self.tts_engine = None
-        self.thread_pool = QThreadPool()
-        self.page().profile().setUrlRequestInterceptor(self.ad_blocker)
+        self.original_html = None
+        self.settings().setAttribute(
+            QWebEngineSettings.PlaybackRequiresUserGesture, False
+        )
+        self.settings().setAttribute(
+            QWebEngineSettings.LocalStorageEnabled, True
+        )
         self.image_url = None
-        print("BrowserTab initialized")
-        self.source_window = None
+        self.profile = profile or QWebEngineProfile.defaultProfile()
+        self.web_page = QWebEnginePage(self.profile, self)
+        self.setPage(self.web_page)
+        self.setUrl(QUrl(url))
+        self.web_page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+        self.web_page.titleChanged.connect(self.handle_title_change)
+        self.page().loadFinished.connect(self.on_page_loaded)
+    
+    def on_load_finished(self, ok):
+        if ok:
+            self.page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+    
+    def handle_title_change(self, title):
+        index = self.window().tabs.indexOf(self)
+        if index != -1:
+            self.window().tabs.setTabText(index, title[:20])
     
     def page_loaded(self, ok):
         if ok:
@@ -463,13 +1140,53 @@ class BrowserTab(QWebEngineView):
             print("Page failed to load")
     
     def contextMenuEvent(self, event):
-        menu = self.page().createStandardContextMenu()
-        selected_text = self.page().selectedText()
-        if selected_text:
-            speak_action = QAction("Speak Selected Text", self)
-            speak_action.triggered.connect(lambda: self.speak_text(selected_text))
-            menu.addAction(speak_action)
-        menu.exec_(event.globalPos())
+        local_pos = event.pos()
+        global_pos = event.globalPos()
+        
+        js_code = f"""
+            (function() {{
+                try {{
+                    var elem = document.elementFromPoint({local_pos.x()}, {local_pos.y()});
+                    if (!elem) return null;
+                    var img = elem.closest('img');
+                    return img ? {{
+                        src: img.src,
+                        x: img.getBoundingClientRect().left + window.scrollX,
+                        y: img.getBoundingClientRect().top + window.scrollY
+                    }} : null;
+                }} catch(e) {{
+                    return null;
+                }}
+            }})()
+        """
+        
+        def handle_result(result):
+            menu = QMenu(self)
+            image_found = False
+            
+            if result and 'src' in result:
+                try:
+                    img_pos = QPoint(int(result['x']), int(result['y']))
+                    adjusted_global_pos = self.mapToGlobal(img_pos)
+                    
+                    menu.addAction(QIcon(":/icons/download.svg"), "Download Image", 
+                                 lambda: self.window().download_manager.add_download(result['src']))
+                    menu.addAction(QIcon(":/icons/copy.svg"), "Copy Image Address",
+                                 lambda: QApplication.clipboard().setText(result['src']))
+                    menu.addSeparator()
+                    image_found = True
+                except Exception as e:
+                    print("Image action error:", e)
+            
+            standard_menu = self.page().createStandardContextMenu()
+            for action in standard_menu.actions():
+                if image_found and action.text().lower() in ["save image", "copy image"]:
+                    continue
+                menu.addAction(action)
+            
+            menu.exec(adjusted_global_pos if image_found else global_pos)
+
+        self.page().runJavaScript(js_code, handle_result)
 
     def speak_text(self, text):
         if self.tts_engine is not None:
@@ -493,7 +1210,6 @@ class BrowserTab(QWebEngineView):
         print("Building context menu")
         self.page().runJavaScript("window.imageUrl;", self.handle_image_context_menu)
         if self.image_url:
-            print(f"Image URL found: {self.image_url}")
             download_action = QAction("Download Image", self)
             download_action.triggered.connect(self.download_image)
             menu.addAction(download_action)
@@ -508,6 +1224,10 @@ class BrowserTab(QWebEngineView):
         menu.addAction("View Page Source", self.view_page_source)
         menu.addAction("Save Page", self.save_page)
         menu.exec_(self.mapToGlobal(position))
+    
+    def download_image(self, url):
+        if url:
+            self.window().download_manager.add_download(url)
     
     def handle_image_context_menu(self, image_url):
         if image_url:
@@ -546,47 +1266,64 @@ class BrowserTab(QWebEngineView):
         if dialog.exec_() == QtWidgets.QFileDialog.Accepted:
             path = dialog.selectedFiles()[0]
             self.page().save(path, QtWebEngineWidgets.QWebEngineDownloadItem.CompleteHtmlSaveFormat)
-        
-    def handle_console_message(self, message):
-        main_window = self.window()
-        if main_window:
-            for i in range(main_window.tabs.count()):
-                if isinstance(main_window.tabs.widget(i), DebugConsole):
-                    debug_console = main_window.tabs.widget(i)
-                    debug_console.log(message)
-                    break
     
     def toggle_reader_mode(self):
         if not self.reader_mode_active:
-            js_code = """
-            (function() {
-                var script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/@mozilla/readability@0.4.4/Readability.js';
-                script.onload = function() {
-                    var article = new Readability(document).parse();
-                    if (article) {
-                        document.body.innerHTML = '<h1>' + article.title + '</h1>' + article.content;
-
-                        var style = document.createElement('style');
-                        style.innerHTML = `
-                            body { font-family: Arial, sans-serif; font-size: 18px; line-height: 1.6; background-color: #f5f5f5; color: #333; margin: 0 auto; max-width: 800px; padding: 20px; }
-                            h1 { font-size: 2em; font-weight: bold; }
-                            img { max-width: 100%; height: auto; }
-                            p { margin-bottom: 20px; }
+            self.activate_reader_mode()
+        else:
+            self.deactivate_reader_mode()
+        self.reader_mode_active = not self.reader_mode_active
+    
+    def activate_reader_mode(self):
+        js = """
+        (function() {
+            // Save original HTML
+            window.originalHTML = document.documentElement.outerHTML;
+            
+            // Load Readability.js
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/readability/0.4.1/Readability.js';
+            script.onload = function() {
+                try {
+                    const doc = new Readability(document.cloneNode(true)).parse();
+                    if (doc) {
+                        document.body.innerHTML = `
+                            <article style="
+                                max-width: 800px;
+                                margin: 40px auto;
+                                font-family: -apple-system, sans-serif;
+                                line-height: 1.6;
+                                color: #374151;
+                                padding: 20px;
+                            ">
+                            <h1>${doc.title}</h1>
+                            ${doc.content}
+                            </article>
                         `;
-                        document.head.appendChild(style);
-                    } else {
-                        alert('Failed to extract readable content.');
                     }
-                };
-                document.head.appendChild(script);
-            })();
-            """
-            self.page().runJavaScript(js_code)
-            self.reader_mode_active = True
+                } catch(e) {
+                    console.error('Readability error:', e);
+                }
+            };
+            document.head.appendChild(script);
+        })()
+        """
+        self.page().runJavaScript(js)
+
+    def deactivate_reader_mode(self):
+        if self.original_html:
+            self.page().runJavaScript(f"""
+                document.open();
+                document.write({self.original_html!r});
+                document.close();
+            """)
         else:
             self.reload()
+    
+    def on_page_loaded(self, ok):
+        if ok:
             self.reader_mode_active = False
+            self.page().runJavaScript("window.originalHTML", lambda result: setattr(self, 'original_html', result))
     
     def closeEvent(self, event):
         self.web_page.deleteLater()
@@ -597,11 +1334,14 @@ class BrowserTab(QWebEngineView):
 
 class PrivateBrowserTab(BrowserTab):
     def __init__(self, url="https://www.google.com", profile=None, parent=None):
-        super().__init__(url, parent)
+        super().__init__(url, profile, parent)
         self.profile = profile or QWebEngineProfile(None)
         self.page = QWebEnginePage(self.profile, self)
+        self.web_page.settings().setAttribute(QWebEngineSettings.LocalStorageEnabled, False)
+        self.web_page.settings().setAttribute(QWebEngineSettings.JavascriptEnabled, True)
         self.setPage(self.page)
         self.setUrl(QUrl(url))
+        self.page().setLifecycleState(QWebEnginePage.LifecycleState.Active)
     
     def page_loaded(self, ok):
         if ok:
@@ -624,32 +1364,396 @@ class PrivateBrowserTab(BrowserTab):
         super().closeEvent(event)
 
 class HistoryPage(QtWidgets.QWidget):
-    """A page to display browsing history."""
     def __init__(self, history):
         super().__init__()
-        layout = QtWidgets.QVBoxLayout()
-        self.history_label = QtWidgets.QLabel("Browsing History")
-        self.history_label.setAlignment(QtCore.Qt.AlignCenter)
-        layout.addWidget(self.history_label)
+        self.history_data = history
+        self.empty_state = None
+        self.setStyleSheet("""
+            HistoryPage {
+                background-color: #f8f9fa;
+            }
+            QListWidget {
+                background: white;
+                border: 1px solid #e9ecef;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QLineEdit {
+                border: 1px solid #e9ecef;
+                border-radius: 20px;
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+        """)
+        self.init_ui()
+    
+    def confirm_clear_history(self):
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setWindowTitle("Clear History")
+        dialog.setText("This will permanently remove all browsing history.")
+        dialog.setInformativeText("Are you sure you want to continue?")
+        dialog.setIcon(QtWidgets.QMessageBox.Warning)
+        dialog.setStandardButtons(
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        dialog.setDefaultButton(QtWidgets.QMessageBox.No)
+        
+        if dialog.exec_() == QtWidgets.QMessageBox.Yes:
+            self.history_data.clear()
+            self.load_history(self.history_data)
+            self.update_empty_state()
+    
+    def export_history(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export History", "", "CSV Files (*.csv)"
+        )
+        if path:
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['Timestamp', 'Title', 'URL'])
+                    for entry in self.history_data:
+                        writer.writerow([
+                            entry.get('timestamp', ''),
+                            entry.get('title', ''),
+                            entry.get('url', '')
+                        ])
+                QtWidgets.QMessageBox.information(
+                    self, "Export Successful", 
+                    f"History exported to:\n{path}"
+                )
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(
+                    self, "Export Error", 
+                    f"Failed to export history:\n{str(e)}"
+                )
+
+    def init_ui(self):
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(24, 16, 24, 24)
+        main_layout.setSpacing(16)
+
+        header = QtWidgets.QLabel("Browsing History")
+        header.setStyleSheet("""
+            font-size: 24px;
+            font-weight: 700;
+            color: #212529;
+            padding-bottom: 8px;
+        """)
+        header.setAlignment(QtCore.Qt.AlignCenter)
+        main_layout.addWidget(header)
+
+        self.search_bar = QtWidgets.QLineEdit()
+        self.search_bar.setPlaceholderText("Search history...")
+        self.search_bar.addAction(QtGui.QIcon(":/icons/search.svg"), QtWidgets.QLineEdit.LeadingPosition)
+        self.search_bar.textChanged.connect(self.filter_history)
+        main_layout.addWidget(self.search_bar)
+
         self.history_list = QtWidgets.QListWidget()
-        self.load_history(history)
-        layout.addWidget(self.history_list)
+        self.history_list.setStyleSheet("""
+            QListWidget::item {
+                border-bottom: 1px solid #e9ecef;
+                padding: 4px;
+            }
+            QListWidget::item:hover {
+                background-color: #f8f9fa;
+            }
+            QListWidget::item:selected {
+                background-color: #e7f5ff;
+                border-radius: 4px;
+            }
+        """)
+        self.history_list.setAlternatingRowColors(True)
+        main_layout.addWidget(self.history_list)
+
+        control_layout = QtWidgets.QHBoxLayout()
+        
+        self.clear_btn = QtWidgets.QPushButton("Clear History")
+        self.clear_btn.setIcon(QtGui.QIcon(":/icons/trash.svg"))
+        self.clear_btn.setStyleSheet("""
+            QPushButton {
+                background:rgb(199, 0, 0);
+                border: 1px solid #dee2e6;
+                color:rgb(255, 96, 96);
+                padding: 8px 32px;
+                min-width: 100px;
+            }
+
+            QPushButton:text {
+                color:rgb(255, 255, 255);
+            }
+
+            QPushButton:hover {
+                background:rgb(151, 0, 0);
+            }
+
+            QPushButton:pressed {
+                background:rgb(255, 63, 63);
+            }
+        """)
+        self.clear_btn.clicked.connect(self.confirm_clear_history)
+        
+        self.export_btn = QtWidgets.QPushButton("Export History")
+        self.export_btn.setIcon(QtGui.QIcon(":/icons/export.svg"))
+        self.export_btn.setStyleSheet("""
+            QPushButton {
+                background: #e9ecef;
+                border: 1px solid #dee2e6;
+                color: #212529;
+                padding: 8px 32px;
+                min-width: 100px;
+            }
+
+            QPushButton:hover {
+                background: #dee2e6;
+            }
+
+            QPushButton:pressed {
+                background: #ced4da;
+            }
+        """)
+        self.export_btn.clicked.connect(self.export_history)
+        
+        control_layout.addWidget(self.clear_btn)
+        control_layout.addWidget(self.export_btn)
+        control_layout.addStretch()
+
+        main_layout.addLayout(control_layout)
+
+        self.empty_state = QtWidgets.QWidget()
+        empty_layout = QtWidgets.QVBoxLayout()
+        empty_layout.setAlignment(QtCore.Qt.AlignCenter)
+        
+        icon = QtWidgets.QLabel()
+        pixmap = QtGui.QPixmap(":/icons/clock.svg").scaled(64, 64, 
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        icon.setPixmap(pixmap)
+        icon.setAlignment(QtCore.Qt.AlignCenter)
+        
+        text = QtWidgets.QLabel("No browsing history available")
+        text.setStyleSheet("""
+            font-size: 16px;
+            color: #868e96;
+            padding-top: 16px;
+        """)
+        empty_layout.addWidget(icon)
+        empty_layout.addWidget(text)
+        self.empty_state.setLayout(empty_layout)
+        main_layout.addWidget(self.empty_state)
+
+        self.load_history(self.history_data)
+
+    def load_history(self, history):
+        self.history_list.clear()
+        for entry in reversed(history):
+            item = QtWidgets.QListWidgetItem()
+            widget = HistoryItemWidget(entry)
+            item.setSizeHint(widget.sizeHint())
+            self.history_list.addItem(item)
+            self.history_list.setItemWidget(item, widget)
+        self.update_empty_state()
+
+    def update_empty_state(self):
+        self.empty_state.setVisible(self.history_list.count() == 0)
+
+    def filter_history(self, text):
+        search_text = text.lower()
+        for i in range(self.history_list.count()):
+            item = self.history_list.item(i)
+            widget = self.history_list.itemWidget(item)
+            if widget and hasattr(widget, 'entry'):
+                url_match = search_text in widget.entry.get('url', '').lower()
+                title_match = search_text in widget.entry.get('title', '').lower()
+                item.setHidden(not (url_match or title_match))
+
+
+class HistoryItemWidget(QtWidgets.QWidget):
+    def __init__(self, entry):
+        super().__init__()
+        self.entry = entry
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QtWidgets.QHBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(16)
+
+        self.favicon = QtWidgets.QLabel()
+        self.favicon.setFixedSize(16, 16)
+        self.load_favicon()
+        layout.addWidget(self.favicon)
+
+        text_layout = QtWidgets.QVBoxLayout()
+        text_layout.setSpacing(4)
+        
+        title = self.entry.get('title', 'No Title')
+        self.title_label = QtWidgets.QLabel()
+        self.set_elided_text(self.title_label, title, QtCore.Qt.ElideRight, 250)
+        
+        url = self.entry.get('url', 'about:blank')
+        self.url_label = QtWidgets.QLabel()
+        self.set_elided_text(self.url_label, url, QtCore.Qt.ElideMiddle, 350)
+        
+        text_layout.addWidget(self.title_label)
+        text_layout.addWidget(self.url_label)
+        layout.addLayout(text_layout, 1)
+
+        self.time_label = QtWidgets.QLabel(self.format_time())
+        self.time_label.setStyleSheet("color: #868e96; font-size: 13px;")
+        layout.addWidget(self.time_label)
 
         self.setLayout(layout)
 
-    def load_history(self, history):
-        """Load the history into the list widget."""
-        for url in history:
-            item = QtWidgets.QListWidgetItem(url)
-            self.history_list.addItem(item)
+    def set_elided_text(self, label, text, mode, width):
+        metrics = QtGui.QFontMetrics(label.font())
+        elided = metrics.elidedText(text, mode, width)
+        label.setText(elided)
+        label.setToolTip(text)
+        label.setStyleSheet("""
+            QLabel {
+                color: %s;
+                font-size: %s;
+                font-weight: %s;
+            }
+        """ % (
+            "#212529" if label == self.title_label else "#868e96",
+            "14px" if label == self.title_label else "13px",
+            "500" if label == self.title_label else "400"
+        ))
+
+    def format_time(self):
+        timestamp = self.entry.get('timestamp', '')
+        try:
+            dt = datetime.fromisoformat(timestamp)
+            return dt.strftime("%b %d, %H:%M")
+        except (ValueError, TypeError):
+            return "Recent"
+
+    def load_favicon(self):
+        pixmap = QtGui.QPixmap(":/icons/globe.svg").scaled(16, 16,
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        self.favicon.setPixmap(pixmap)
 
 class SettingsDialog(QtWidgets.QDialog):
+    settings_changed = QtCore.pyqtSignal()
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', sans-serif;
+            }
+
+            QGroupBox {
+                border: 1px solid #dee2e6;
+                border-radius: 0;
+                margin-top: 20px;
+                padding-top: 15px;
+                font-weight: 500;
+                color: #212529;
+                font-size: 14px;
+            }
+
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 4px;
+            }
+
+            QLineEdit {
+                border: 1px solid #dee2e6;
+                border-radius: 0;
+                padding: 8px 12px;
+                font-size: 14px;
+                background: white;
+                selection-background-color: #e2e6ea;
+                min-width: 300px;
+            }
+
+            QLineEdit:focus {
+                border-color: #adb5bd;
+            }
+
+            QComboBox {
+                border: 1px solid #dee2e6;
+                border-radius: 0;
+                padding: 8px 12px;
+                background: white;
+                min-width: 200px;
+            }
+
+            QComboBox::drop-down {
+                border: 0;
+                width: 20px;
+            }
+
+            QComboBox QAbstractItemView {
+                border: 1px solid #dee2e6;
+                selection-background-color: #f1f3f5;
+                selection-color: #212529;
+            }
+
+            QCheckBox {
+                spacing: 0;
+            }
+
+            QCheckBox::indicator {
+                width: 0;
+                height: 0;
+            }
+
+            QDialogButtonBox QPushButton {
+                background: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 0;
+                padding: 8px 16px;
+                min-width: 80px;
+            }
+            
+            QDialogButtonBox QPushButton:hover {
+                background: #e9ecef;
+            }
+            
+            QDialogButtonBox QPushButton:pressed {
+                background: #dee2e6;
+            }
+
+            QPushButton {
+                background: #e9ecef;
+                border: 1px solid #dee2e6;
+                color: #212529;
+                padding: 8px 16px;
+                min-width: 80px;
+            }
+            
+            QPushButton:hover {
+                background: #dee2e6;
+            }
+            
+            QPushButton:pressed {
+                background: #ced4da;
+            }
+            
+            QPushButton:focus {
+                border-color: #adb5bd;
+            }
+
+            QLabel[accessibleName="section_header"] {
+                font-size: 16px;
+                font-weight: 600;
+                color: #212529;
+                margin-bottom: 12px;
+            }
+
+            QWidget#experimental_section {
+                border-top: 1px solid #dee2e6;
+                padding-top: 16px;
+                margin-top: 16px;
+            }
+        """)
         self.setWindowTitle("Settings")
         self.layout = QtWidgets.QVBoxLayout(self)
 
-        # Search Engine Settings
         search_engine_group = QtWidgets.QGroupBox("Search Engine")
         search_engine_layout = QtWidgets.QVBoxLayout()
 
@@ -664,6 +1768,17 @@ class SettingsDialog(QtWidgets.QDialog):
         search_engine_group.setLayout(search_engine_layout)
         self.layout.addWidget(search_engine_group)
 
+        experimental_group = QtWidgets.QGroupBox("Experiments")
+        experimental_layout = QtWidgets.QVBoxLayout()
+
+        self.tab_style_toggle = StyledCheckBox("Experimental Tab Styling")
+        experimental_layout.addWidget(self.tab_style_toggle)
+
+        experimental_group.setLayout(experimental_layout)
+        self.layout.insertWidget(1, experimental_group)
+
+        self.tab_style_toggle.toggled.connect(self.preview_tab_style)
+
         # Buttons
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
@@ -673,6 +1788,15 @@ class SettingsDialog(QtWidgets.QDialog):
         self.layout.addWidget(buttons)
 
         self.load_settings()
+    
+    def preview_tab_style(self, checked):
+        example_tabbar = ScrollableTabBar()
+        example_tabbar.addTab("Preview Tab")
+        example_tabbar.apply_style_settings()
+        
+        main_window = self.parent()
+        if isinstance(main_window, PyBrowse):
+            main_window.tabs.tabBar().apply_style_settings()
 
     def load_settings(self):
         settings = QtCore.QSettings("PyBrowse", "PyBrowse")
@@ -681,97 +1805,202 @@ class SettingsDialog(QtWidgets.QDialog):
         index = self.search_engine_combo.findText(search_engine)
         self.search_engine_combo.setCurrentIndex(index)
         self.custom_search_engine_input.setText(custom_search)
+        experimental_tab_style = settings.value("experimental/tab_style", False, bool)
+        self.tab_style_toggle.setChecked(experimental_tab_style)
 
     def save_settings(self):
         settings = QtCore.QSettings("PyBrowse", "PyBrowse")
-        search_engine = self.search_engine_combo.currentText()
-        custom_search = self.custom_search_engine_input.text()
-        settings.setValue("search_engine", search_engine)
-        settings.setValue("custom_search_engine", custom_search)
+        settings.setValue("search_engine", self.search_engine_combo.currentText())
+        settings.setValue("custom_search_engine", self.custom_search_engine_input.text())
+        settings.setValue("experimental/tab_style", self.tab_style_toggle.isChecked())
+        self.settings_changed.emit()
 
 class PyBrowse(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+        self.network_manager = QNetworkAccessManager(self)
+        self.current_search_reply = None
+        self.suppress_autocomplete = False
+        self.create_menu_bar()
         self.setWindowTitle("PyBrowse")
         self.setGeometry(100, 100, 1024, 768)
-        central_widget = QtWidgets.QWidget(self)
-        self.setCentralWidget(central_widget)
-        layout = QtWidgets.QVBoxLayout(central_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.central_widget = central_widget
-        self.tabs = TabWidget(self)
-        layout.addWidget(self.tabs)
-        self.create_navigation_bar()
-        layout.addWidget(self.navigation_bar)
         self.bookmarks_file = "bookmarks.json"
         self.history_file = "history.json"
+        self.is_private_mode = False
+        self.search_engine = "Google"
+        self.custom_search_engine = ""
         self.bookmarks = []
         self.history = []
         self.is_fullscreen = False
-        self.create_fullscreen_toggle()
-        self.load_bookmarks()
-        self.load_history()
-        self.tabs.tabCloseRequested.connect(self.close_tab)
-        self.tabs.currentChanged.connect(self.update_url_bar)
-        self.create_menu_bar()
-        self.create_tts_toggle()
-        self.is_private_mode = False
         self.default_profile = QWebEngineProfile.defaultProfile()
-        self.private_profile = QWebEngineProfile(None)
-        self.reader_mode_active = False
-        self.cleanup_timer = QTimer(self)
-        self.cleanup_timer.setSingleShot(True)
-        self.cleanup_timer.timeout.connect(self.delayed_cleanup)
-        self.create_private_mode_toggle()
-        self.download_manager = DownloadManager()
-        self.add_new_tab("https://www.google.com")
-        self.load_user_settings()
-        self.setup_completer()
-    
-    def setup_completer(self):
+        self.default_profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
+        self.private_profile = QWebEngineProfile("private")
+        self.private_profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
+        self.central_widget = QtWidgets.QWidget(self)
+        self.setCentralWidget(self.central_widget)
+        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+        self.layout.setSpacing(0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.tabs = TabWidget(self)
+        self.layout.addWidget(self.tabs)
         self.completer_model = QtCore.QStringListModel()
-        self.completer = QCompleter(self.completer_model, self)
+        self.completer = QCompleter(self.completer_model, self) 
         self.completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self.create_navigation_bar()
+        self.layout.addWidget(self.navigation_bar)
+        self.tabs.currentChanged.connect(self.activate_current_tab)
         self.url_bar.setCompleter(self.completer)
         self.url_bar.textEdited.connect(self.fetch_search_suggestions)
+        self.load_bookmarks()
+        self.load_history()
+        self.load_user_settings()
+        self.update_completer_model()
+        self.download_manager = DownloadManager()
+        self.add_new_tab("https://www.google.com")
+        self.create_fullscreen_toggle()
+        self.search_timer = QtCore.QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.fetch_search_suggestions)
+        self.setStyleSheet("""
+            QMainWindow {
+                background: #ffffff;
+                border: none;
+            }
+            QToolBar {
+                background: #f8f9fa;
+                border-bottom: 1px solid #dee2e6;
+                padding: 4px;
+            }
+            QLineEdit {
+                border: 1px solid #dee2e6;
+                border-radius: 0;
+                padding: 6px 12px;
+                font-size: 14px;
+            }
+        """)
+    
+    def handle_text_changes(self):
+        if not self.url_bar.text():
+            self.completer_model.setStringList([])
+            self.url_bar.setPlaceholderText("Search or enter address")
+    
+    def activate_current_tab(self, index):
+        widget = self.tabs.widget(index)
+        if widget and isinstance(widget, BrowserTab):
+            widget.web_page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+
+    def handle_settings_change(self):
+        self.load_user_settings()
+        tab_bar = self.tabs.tabBar()
+        if isinstance(tab_bar, ScrollableTabBar):
+            tab_bar.apply_style_settings()
+            tab_bar.updateGeometry()
+            self.tabs.repaint()
+        
+    def apply_tab_style_settings(self):
+        tab_bar = self.tabs.tabBar()
+        if isinstance(tab_bar, ScrollableTabBar):
+            tab_bar.apply_style_settings()
+            tab_bar.updateGeometry()
+            self.tabs.repaint()
+    
     
     def update_completer_model(self):
-        suggestions = set(self.history + self.bookmarks)
-        self.completer_model.setStringList(sorted(suggestions))
-    
-    def fetch_search_suggestions(self, text):
-        if text.strip() == '':
-            return
-
         try:
-            response = requests.get(
-                f"https://suggestqueries.google.com/complete/search",
-                params={'client': 'firefox', 'q': text}
-            )
-            suggestions = response.json()[1]
-            combined_suggestions = set(self.history + self.bookmarks + suggestions)
-            self.completer_model.setStringList(sorted(combined_suggestions))
-        except requests.RequestException as e:
-            print(f"Error fetching search suggestions: {e}")
-            # Fallback to history and bookmarks
-            self.update_completer_model()
+            # use list comprehension with explicit checks
+            self.local_urls = list(set(
+                entry.get('url', '') for entry in self.history + self.bookmarks
+                if isinstance(entry, dict) and 'url' in entry
+            ))
+            self.completer_model.setStringList(self.local_urls)
+            
+            # force completer refresh
+            self.completer.complete()
+        except Exception as e:
+            print(f"Completer error: {e}")
+
     
-    def add_new_tab(self, url=None, is_private=None):
-        if is_private is None:
-            is_private = self.is_private_mode
-        if url is None:
-            new_tab_page = CustomNewTabPage(self, is_private)
-            i = self.tabs.addTab(new_tab_page, "New Private Tab" if is_private else "New Tab")
+    def fetch_search_suggestions(self):
+        try:
+            query = self.url_bar.text().strip()
+            if not query:
+                self.handle_text_changes()
+                return
+            
+            self.url_bar.setPlaceholderText("Search or enter address")
+            
+            local_matches = [
+                entry['url'] for entry in self.history + self.bookmarks
+                if query.lower() in entry.get('url', '').lower()
+            ][:5]
+            
+            self.completer_model.setStringList(local_matches)
+            
+            if self.current_search_reply:
+                self.current_search_reply.abort()
+            
+            url = QUrl("https://suggestqueries.google.com/complete/search")
+            query_params = QUrlQuery()
+            query_params.addQueryItem("client", "firefox")
+            query_params.addQueryItem("q", query)
+            url.setQuery(query_params)
+            
+            request = QNetworkRequest(url)
+            self.current_search_reply = self.network_manager.get(request)
+            self.current_search_reply.finished.connect(
+                lambda: self.handle_online_suggestions(self.current_search_reply, query)
+            )
+            
+        except Exception as e:
+            print(f"Search error: {e}")
+    
+    def handle_online_suggestions(self, reply, original_query):
+        try:
+            if reply.error() == QNetworkReply.NoError:
+                data = bytes(reply.readAll()).decode('utf-8')
+                online_suggestions = json.loads(data)[1]
+                
+                current = self.completer_model.stringList()
+                combined = list(set(current + online_suggestions))[:10]
+                
+                self.completer_model.setStringList(combined)
+                self.completer.complete()
+        except Exception as e:
+            print(f"Suggestion error: {e}")
+        finally:
+            reply.deleteLater()
+            self.current_search_reply = None
+
+    def add_new_tab(self, url=None, is_private=False):
+        self.suppress_autocomplete = True
+        if url is None or isinstance(url, bool):  # handle bad parameters
+            url = "about:blank"
+            
+        # convert to QUrl and validate
+        qurl = QUrl(url)
+        if not qurl.isValid():
+            qurl = QUrl("https://www.google.com/search?q=" + url)
+        
+        if is_private:
+            tab = PrivateBrowserTab(qurl.toString(), self.private_profile)
         else:
-            if is_private:
-                browser = PrivateBrowserTab(url, self.private_profile)
-            else:
-                browser = BrowserTab(url, self.default_profile)
-            i = self.tabs.addTab(browser, "New Private Tab" if is_private else "New Tab")
-            browser.urlChanged.connect(lambda qurl, browser=browser: self.update_url_bar(qurl, browser))
-            browser.loadFinished.connect(lambda _, i=i, browser=browser: 
-                self.tabs.setTabText(i, browser._page.title()))
-        self.tabs.setCurrentIndex(i)
+            tab = BrowserTab(qurl.toString(), self.default_profile)
+
+        tab_index = self.tabs.addTab(tab, "Loading...")
+        tab.titleChanged.connect(self.update_tab_title)
+        tab.urlChanged.connect(self.on_url_changed)
+        self.tabs.setCurrentIndex(tab_index)
+
+        self.suppress_autocomplete = False
+        
+        # add to history after page loads
+        tab.page().loadFinished.connect(
+            lambda ok, url=url: self.add_to_history(url)
+        )
+
+    def on_url_changed(self, qurl):
+        if not self.suppress_autocomplete:
+            self.update_url_bar(qurl)
 
     def update_frame(self):
         self.repaint()
@@ -836,42 +2065,118 @@ class PyBrowse(QtWidgets.QMainWindow):
         """)
 
     def create_navigation_bar(self):
-        """Create the navigation bar with URL entry, back, reload, go buttons, and new tab button."""
-        self.navigation_bar = QtWidgets.QToolBar("Navigation")
+        self.navigation_bar = QtWidgets.QToolBar("Main Navigation")
+        self.addToolBar(QtCore.Qt.TopToolBarArea, self.navigation_bar)
         self.navigation_bar.setMovable(False)
-        back_button = QAction(QIcon.fromTheme("go-previous", QIcon(":/icons/back.svg")), "Back", self)
-        back_button.triggered.connect(self.go_back)
-        self.navigation_bar.addAction(back_button)
-        forward_button = QAction(QIcon.fromTheme("go-next", QIcon(":/icons/forward.svg")), "Forward", self)
-        forward_button.triggered.connect(self.go_forward)
-        self.navigation_bar.addAction(forward_button)
-        reload_button = QAction(QIcon.fromTheme("view-refresh", QIcon(":/icons/reload.svg")), "Reload", self)
-        reload_button.triggered.connect(self.reload_page)
-        self.navigation_bar.addAction(reload_button)
-        self.url_bar = QtWidgets.QLineEdit()
+        self.navigation_bar.setIconSize(QtCore.QSize(24, 24))
+
+        # Navigation controls
+        controls = [
+            ('back', 'Back', self.go_back, 'back.svg'),
+            ('forward', 'Forward', self.go_forward, 'forward.svg'),
+            ('reload', 'Reload', self.reload_page, 'reload.svg'),
+            ('new_tab', 'New Tab', lambda: self.add_new_tab(), 'new_tab.svg'),
+            ('private', 'Private Mode', self.toggle_private_mode, 'private.svg'),
+            ('downloads', 'Downloads', self.open_download_manager, 'download.svg'),
+            # The Developer Console (internally known as the Developer Tools) WILL be returning in 0.4.0. Due to the amount of problems it's causing, it's been temporarily deprecated.
+            ('dev_tools', 'Developer Console', self.open_dev_tools, 'dev_tools.svg'),
+            ('history', 'History', self.open_history_page, 'history.svg'),
+            ('reader_mode', 'Reader Mode', self.toggle_reader_mode, 'reader.svg'),
+            ('fullscreen', 'Fullscreen', self.toggle_fullscreen, 'fullscreen.svg')
+        ]
+
+        for action_id, text, handler, icon in controls:
+            btn = QAction(QIcon(f":/icons/{icon}"), text, self)
+            btn.triggered.connect(handler)
+            if action_id == 'private':
+                btn.setCheckable(True)
+                self.private_mode_action = btn
+            self.navigation_bar.addAction(btn)
+
+        # URL Bar with improved search handling
+        self.url_bar = QLineEdit()
+        self.url_bar.textEdited.connect(self.handle_user_typing)
+        self.url_bar.focusInEvent = self.url_bar_focused
+        self.url_bar.setPlaceholderText("Search or enter address")
+        self.url_bar.setClearButtonEnabled(True)
+        self.url_bar.setMinimumWidth(400)
         self.url_bar.returnPressed.connect(self.navigate_to_url)
         self.navigation_bar.addWidget(self.url_bar)
-        go_button = QAction(QIcon.fromTheme("go-jump", QIcon(":/icons/go.svg")), "Go", self)
-        go_button.triggered.connect(self.navigate_to_url)
-        self.navigation_bar.addAction(go_button)
-        new_tab_button = QAction(QIcon.fromTheme("tab-new", QIcon(":/icons/new_tab.svg")), "New Tab", self)
-        new_tab_button.triggered.connect(lambda: self.add_new_tab())
-        self.navigation_bar.addAction(new_tab_button)
-        reader_mode_button = QAction(QIcon.fromTheme("format-justify-fill", QIcon(":/icons/reader_mode.svg")), "Reader Mode", self)
-        reader_mode_button.triggered.connect(self.toggle_reader_mode)
-        self.navigation_bar.addAction(reader_mode_button)
-        dev_tools_button = QAction(QIcon.fromTheme("applications-development", QIcon(":/icons/dev_tools.svg")), "Debug Menu", self)
-        dev_tools_button.triggered.connect(self.open_dev_tools)
-        self.navigation_bar.addAction(dev_tools_button)
-        history_button = QAction(QIcon.fromTheme("document-open-recent", QIcon(":/icons/history.svg")), "History", self)
-        history_button.triggered.connect(self.open_history_page)
-        self.navigation_bar.addAction(history_button)
-        fullscreen_button = QAction(QIcon.fromTheme("view-fullscreen", QIcon(":/icons/fullscreen.svg")), "Fullscreen", self)
-        fullscreen_button.triggered.connect(self.toggle_fullscreen)
-        self.navigation_bar.addAction(fullscreen_button)
-        download_button = QAction(QIcon.fromTheme("download", QIcon(":/icons/download.svg")), "Downloads", self)
-        download_button.triggered.connect(self.open_download_manager)
-        self.navigation_bar.addAction(download_button)
+
+        # Visual styling
+        self.navigation_bar.setStyleSheet("""
+            QToolBar {
+                background: #f8f9fa;
+                border-bottom: 1px solid #dee2e6;
+                padding: 4px 8px;
+            }
+            QToolButton {
+                padding: 6px 8px;
+                background: transparent;
+                border-radius: 4px;
+                transition: background 0.2s ease;
+            }
+            QToolButton:hover {
+                background: rgba(233, 236, 239, 0.6);
+            }
+            QToolButton:pressed {
+                background: rgba(206, 212, 218, 0.7);
+            }
+            QToolButton[checked="true"] {
+                background: rgba(206, 212, 218, 0.5);
+            }
+        """)
+
+        self.completer.popup().setStyleSheet(f"""
+            QListView {{
+                background: {self.url_bar.palette().base().color().name()};
+                border: 1px solid {self.url_bar.palette().mid().color().name()};
+                border-radius: 0;
+                padding: 0;
+                font: {self.url_bar.font().toString()};
+                color: {self.url_bar.palette().text().color().name()};
+            }}
+            QListView::item {{
+                padding: 8px 16px;
+                margin: 0;
+            }}
+            QListView::item:hover {{
+                background: {self.url_bar.palette().alternateBase().color().name()};
+            }}
+            QListView::item:selected {{
+                background: {self.url_bar.palette().highlight().color().name()};
+                color: {self.url_bar.palette().highlightedText().color().name()};
+                border-radius: 0;
+            }}
+        """)
+    
+        self.completer = QCompleter(self.url_bar)
+        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.completer.setFilterMode(Qt.MatchContains)
+        self.completer.setModel(self.completer_model)
+        self.url_bar.setCompleter(self.completer)
+        self.url_bar.textChanged.connect(self.handle_text_changes)
+    
+    def handle_user_typing(self):
+        if not self.suppress_autocomplete:
+            self.start_search_timer()
+    
+    def start_search_timer(self):
+        if self.suppress_autocomplete:
+            return
+
+    def url_bar_focused(self, event):
+        QtWidgets.QLineEdit.focusInEvent(self.url_bar, event)
+        if self.url_bar.text():
+            self.completer.complete()
+    
+    def open_dev_tools(self):
+        QtWidgets.QMessageBox.information(
+            self,
+            "Coming Soon",
+            "The Developer Console is being redesigned for v0.4.0.\n"
+            "Please use Chromium's DevTools (F12) for now.",
+        )
     
     def open_download_manager(self):
         for i in range(self.tabs.count()):
@@ -900,43 +2205,51 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.central_widget.setGeometry(self.rect())
 
     def create_menu_bar(self):
-        """Create the menu bar with Help and Bookmarks sections."""
         menu_bar = self.menuBar()
-        help_menu = menu_bar.addMenu("Help")
-        about_action = QtWidgets.QAction("About", self)
-        about_action.triggered.connect(self.show_about_dialog)
-        help_menu.addAction(about_action)
-        help_menu.addAction("Accessibility", self.open_accessibility_page)
-        self.bookmarks_menu = menu_bar.addMenu("Bookmarks")
-        add_bookmark_action = QtWidgets.QAction("Add Bookmark", self)
-        add_bookmark_action.triggered.connect(self.add_bookmark)
-        self.bookmarks_menu.addAction(add_bookmark_action)
-        self.bookmarks_menu.addSeparator()
-        self.load_bookmarks_menu()
-        settings_menu = menu_bar.addMenu("Settings")
-        settings_action = QtWidgets.QAction("Search Engine Preferences", self)
+        file_menu = menu_bar.addMenu("&File")
+        file_menu.addAction("New Window", lambda: PyBrowse().show())
+        file_menu.addAction("Exit", self.close)
+        settings_menu = menu_bar.addMenu("&Settings")
+        settings_action = QAction("Preferences...", self)
         settings_action.triggered.connect(self.open_settings_dialog)
         settings_menu.addAction(settings_action)
+        help_menu = menu_bar.addMenu("&Help")
+        help_menu.addAction("About", self.show_about_dialog)
+        help_menu.addAction("Accessibility", self.open_accessibility_page)
     
     def open_settings_dialog(self):
         dialog = SettingsDialog(self)
+        dialog.settings_changed.connect(self.handle_settings_change)
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             dialog.save_settings()
-            self.load_user_settings()
+    
+    def refresh_tab_styles(self):
+        """Update styling for all tabs"""
+        tab_bar = self.tabs.tabBar()
+        if isinstance(tab_bar, ScrollableTabBar):
+            tab_bar.settings.sync()
+            tab_bar.apply_style_settings()
+            tab_bar.updateGeometry()
+            self.tabs.repaint()
 
     def load_user_settings(self):
         settings = QtCore.QSettings("PyBrowse", "PyBrowse")
-        self.search_engine = settings.value("search_engine", "Google")
-        self.custom_search_engine = settings.value("custom_search_engine", "")
+        self.search_engine = settings.value("search_engine", "Google", str)
+        self.custom_search_engine = settings.value("custom_search_engine", "", str)
 
     def show_about_dialog(self):
-        """Show an About dialog with browser information."""
-        QtWidgets.QMessageBox.information(self, "About PyBrowse", "PyBrowse - Version 0.2.5")
+        dialog = AboutDialog(self)
+        dialog.exec_()
     
-    def update_tab_title(self, tab, title):
-        index = self.tabs.indexOf(tab)
-        if index != -1:
-            self.tabs.setTabText(index, title)
+    def update_tab_title(self, title):
+        tab = self.sender()  # get the tab that emitted the signal
+        if tab and isinstance(tab, (BrowserTab, PrivateBrowserTab)):
+            index = self.tabs.indexOf(tab)
+            if index != -1:
+                # shorten long titles
+                display_title = title[:20] + "..." if len(title) > 23 else title
+                self.tabs.setTabText(index, display_title)
+                self.tabs.setTabToolTip(index, title)
 
     def close_tab(self, index):
         """Close the tab at the given index."""
@@ -944,23 +2257,20 @@ class PyBrowse(QtWidgets.QMainWindow):
             self.tabs.removeTab(index)
 
     def navigate_to_url(self):
-        text = self.url_bar.text().strip()
-        if text == '':
+        query = self.url_bar.text().strip()
+        if not query:
             return
 
-        # Check if the text is a URL or needs to be searched
-        if re.match(r'^(http|https)://', text):
-            url = QtCore.QUrl(text)
-        elif re.match(r'^[\w\-]+(\.[\w\-]+)+.*$', text):
-            url = QtCore.QUrl('http://' + text)
+        if re.match(r'^https?://', query, re.IGNORECASE):
+            url = QtCore.QUrl(query)
+        elif '.' in query and ' ' not in query:
+            url = QtCore.QUrl(f"http://{query}")
         else:
-            search_url = self.get_search_url(text)
-            url = QtCore.QUrl(search_url)
-
+            url = QtCore.QUrl(self.get_search_url(query))
+        
         current_tab = self.tabs.currentWidget()
         if isinstance(current_tab, BrowserTab):
             current_tab.setUrl(url)
-            # Add to history
             self.add_to_history(url.toString())
 
     def get_search_url(self, query):
@@ -1010,38 +2320,44 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.tabs.setCurrentIndex(i)
 
     def add_to_history(self, url):
-        if not self.is_private_mode and url not in self.history:
-            self.history.append(url)
+        if not self.is_private_mode:
+
+            current_tab = self.tabs.currentWidget()
+            title = ""
+            
+            if isinstance(current_tab, BrowserTab):
+                title = current_tab.page().title()
+            else:
+                title = QUrl(url).host() or url[:50]  # use domain or first 50 chars
+                
+            self.history.append({
+                'url': url,
+                'title': title,
+                'timestamp': datetime.now().isoformat()
+            })
+            self.history = self.history[-500:]  # keep only last 500 entries
             self.save_history()
-            self.update_completer_model()  # Update suggestions
+            self.update_completer_model()
 
     def add_bookmark(self):
-        current_url = self.tabs.currentWidget().url().toString()
-        if current_url not in self.bookmarks:
-            self.bookmarks.append(current_url)
+        current_tab = self.tabs.currentWidget()
+        if isinstance(current_tab, BrowserTab):
+            url = current_tab.url().toString()
+            title = current_tab.page().title()
+            entry = {
+                'url': url,
+                'title': title,
+                'created': datetime.now().isoformat()
+            }
+            if entry not in self.bookmarks:
+                self.bookmarks.append(entry)
             self.save_bookmarks()
-            self.load_bookmarks_menu()
             self.update_completer_model()
 
     def toggle_reader_mode(self):
         current_tab = self.tabs.currentWidget()
         if isinstance(current_tab, BrowserTab):
             current_tab.toggle_reader_mode()
-    
-    # FIXME: The debug menu is known internally as open_dev_tools (or just DevTools in general), but it should really be something like open_debug_menu. I'll change this soon.
-    def open_dev_tools(self):
-        """Open an enhanced debug console in a new tab."""
-        debug_console = DebugConsole(self)
-        i = self.tabs.addTab(debug_console, "Debug Console")
-        self.tabs.setCurrentIndex(i)
-        current_tab = self.tabs.widget(self.tabs.currentIndex() - 1)
-        if isinstance(current_tab, BrowserTab):
-            url = current_tab.url().toString()
-            debug_console.log(f"Current page: {url}")
-            current_tab.page().runJavaScript("navigator.userAgent", debug_console.log)
-            current_tab.page().runJavaScript("window.location.href", lambda result: debug_console.log(f"Full URL: {result}"))
-            current_tab.page().runJavaScript("document.title", lambda result: debug_console.log(f"Page Title: {result}"))
-            current_tab.page().runJavaScript("document.readyState", lambda result: debug_console.log(f"Document Ready State: {result}"))
 
     def load_bookmarks_menu(self):
         """Load the saved bookmarks into the Bookmarks menu."""
@@ -1059,12 +2375,19 @@ class PyBrowse(QtWidgets.QMainWindow):
             json.dump(self.bookmarks, f)
 
     def load_bookmarks(self):
-        """Load bookmarks from a JSON file if it exists."""
+        self.bookmarks = []
         if os.path.exists(self.bookmarks_file):
             with open(self.bookmarks_file, 'r') as f:
-                self.bookmarks = json.load(f)
-        else:
-            self.bookmarks = []
+                bookmarks_data = json.load(f)
+                for entry in bookmarks_data:
+                    if isinstance(entry, str):
+                        self.bookmarks.append({
+                            'url': entry,
+                            'title': entry,
+                            'created': datetime.now().isoformat()
+                        })
+                    else:
+                        self.bookmarks.append(entry)
 
     def save_history(self):
         """Save the history to a JSON file."""
@@ -1072,12 +2395,19 @@ class PyBrowse(QtWidgets.QMainWindow):
             json.dump(self.history, f)
 
     def load_history(self):
-        """Load history from a JSON file if it exists."""
+        self.history = []
         if os.path.exists(self.history_file):
             with open(self.history_file, 'r') as f:
-                self.history = json.load(f)
-        else:
-            self.history = []
+                history_data = json.load(f)
+                for entry in history_data:
+                    if isinstance(entry, str):
+                        self.history.append({
+                            'url': entry,
+                            'title': entry,
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    else:
+                        self.history.append(entry)
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Escape and self.is_fullscreen:
@@ -1087,7 +2417,8 @@ class PyBrowse(QtWidgets.QMainWindow):
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.central_widget.setGeometry(self.rect())
+        self.updateGeometry()
+        self.update()
     
     def create_tts_toggle(self):
         self.tts_action = QAction("Enable Text-to-Speech", self)
