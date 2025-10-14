@@ -7,16 +7,564 @@ import json
 import os
 import icons_rc
 import pyttsx3
-from PyQt5.QtWebEngineCore import QWebEngineUrlRequestInterceptor
-from PyQt5 import QtWidgets, QtCore, QtWebEngineWidgets, QtGui
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage, QWebEngineProfile
-from PyQt5.QtCore import QUrl, QTimer, QFileInfo, QDir, pyqtSignal, QThread, Qt, QRunnable, QThreadPool, QEasingCurve, QPropertyAnimation, QPoint, Qt, QUrlQuery, QDateTime
-from PyQt5.QtWidgets import QWidget, QCompleter, QMainWindow, QTabWidget, QLabel, QAction, QFileDialog, QStyleFactory, QListWidgetItem, QProgressBar, QFileDialog, QMenu, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QGridLayout, QApplication
-from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from PyQt5.QtGui import QIcon, QCursor
+from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor, QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineDownloadRequest
+from PyQt6 import QtWidgets, QtCore, QtGui
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtCore import QUrl, QTimer, QFileInfo, QDir, pyqtSignal, QThread, Qt, QRunnable, QThreadPool, QEasingCurve, QPropertyAnimation, QPoint, QUrlQuery, QDateTime
+from PyQt6.QtWidgets import QWidget, QCompleter, QMainWindow, QTabWidget, QLabel, QFileDialog, QStyleFactory, QListWidgetItem, QProgressBar, QMenu, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QGridLayout, QApplication
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PyQt6.QtGui import QIcon, QCursor, QAction, QPalette
 from datetime import datetime, timedelta
 from functools import partial
-from PyQt5.QtWebEngineWidgets import QWebEngineSettings
+
+# Modern Design System
+class DesignSystem:
+    """Modern design tokens for PyBrowse"""
+    
+    @staticmethod
+    def is_dark_mode():
+        """Detect system dark mode"""
+        app = QApplication.instance()
+        if app:
+            palette = app.palette()
+            bg_color = palette.color(QPalette.ColorRole.Window)
+            # If background is darker than midpoint, it's dark mode
+            return bg_color.lightness() < 128
+        return False
+    
+    @staticmethod
+    def get_theme():
+        """Get current theme colors based on system preference"""
+        is_dark = DesignSystem.is_dark_mode()
+        
+        if is_dark:
+            return {
+                # Dark theme
+                'background': '#1a1a1a',
+                'surface': '#252525',
+                'surface_variant': '#2d2d2d',
+                'surface_elevated': '#333333',
+                'text_primary': '#e8e8e8',
+                'text_secondary': '#a8a8a8',
+                'text_tertiary': '#787878',
+                'border': '#404040',
+                'border_subtle': '#2d2d2d',
+                'accent': '#4a9eff',
+                'accent_hover': '#6db3ff',
+                'accent_pressed': '#2e8aff',
+                'success': '#48c774',
+                'warning': '#ffdd57',
+                'error': '#f14668',
+                'overlay': 'rgba(0, 0, 0, 0.6)',
+                'tab_bg': '#2d2d2d',
+                'tab_active': '#3d3d3d',
+                'tab_hover': '#353535',
+                'input_bg': '#2d2d2d',
+                'input_border': '#404040',
+                'toolbar_bg': '#1f1f1f',
+                'statusbar_bg': '#1f1f1f',
+                'tooltip_bg': '#3d3d3d',
+                'shadow': 'rgba(0, 0, 0, 0.4)',
+            }
+        else:
+            return {
+                # Light theme
+                'background': '#f5f7fa',
+                'surface': '#ffffff',
+                'surface_variant': '#f8f9fa',
+                'surface_elevated': '#ffffff',
+                'text_primary': '#1a1a1a',
+                'text_secondary': '#4a4a4a',
+                'text_tertiary': '#787878',
+                'border': '#e0e0e0',
+                'border_subtle': '#f0f0f0',
+                'accent': '#0066ff',
+                'accent_hover': '#0052cc',
+                'accent_pressed': '#003d99',
+                'success': '#00c851',
+                'warning': '#ffbb33',
+                'error': '#ff4444',
+                'overlay': 'rgba(0, 0, 0, 0.3)',
+                'tab_bg': '#e9ecef',
+                'tab_active': '#ffffff',
+                'tab_hover': '#f1f3f5',
+                'input_bg': '#ffffff',
+                'input_border': '#dee2e6',
+                'toolbar_bg': '#fafbfc',
+                'statusbar_bg': '#fafbfc',
+                'tooltip_bg': '#3d3d3d',
+                'shadow': 'rgba(0, 0, 0, 0.1)',
+            }
+    
+    @staticmethod
+    def get_stylesheet():
+        """Generate complete stylesheet based on current theme"""
+        theme = DesignSystem.get_theme()
+        
+        return f"""
+            /* Main Window */
+            QMainWindow {{
+                background: {theme['background']};
+            }}
+            
+            /* Toolbar */
+            QToolBar {{
+                background: {theme['toolbar_bg']};
+                border: none;
+                border-bottom: 1px solid {theme['border']};
+                padding: 8px 12px;
+                spacing: 8px;
+            }}
+            
+            QToolBar QToolButton {{
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                padding: 6px;
+                color: {theme['text_primary']};
+            }}
+            
+            QToolBar QToolButton:hover {{
+                background: {theme['surface_variant']};
+                border-color: {theme['border_subtle']};
+            }}
+            
+            QToolBar QToolButton:pressed {{
+                background: {theme['surface']};
+            }}
+            
+            QToolBar QToolButton:checked {{
+                background: {theme['accent']};
+                color: white;
+                border-color: {theme['accent']};
+            }}
+            
+            /* Tab Widget */
+            QTabWidget {{
+                background: transparent;
+                border: none;
+            }}
+            
+            QTabWidget::pane {{
+                background: {theme['surface']};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+                margin: 0;
+                padding: 0;
+            }}
+            
+            QTabBar {{
+                background: transparent;
+            }}
+            
+            QTabBar::tab {{
+                background: {theme['tab_bg']};
+                border: 1px solid {theme['border']};
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 10px 20px;
+                margin: 0 2px;
+                color: {theme['text_secondary']};
+                font-weight: 500;
+                min-width: 120px;
+                max-width: 250px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background: {theme['tab_active']};
+                color: {theme['text_primary']};
+                border-bottom: 2px solid {theme['accent']};
+            }}
+            
+            QTabBar::tab:hover:!selected {{
+                background: {theme['tab_hover']};
+            }}
+            
+            /* Line Edit (URL Bar) */
+            QLineEdit {{
+                background: {theme['input_bg']};
+                border: 1px solid {theme['input_border']};
+                border-radius: 8px;
+                padding: 10px 16px;
+                color: {theme['text_primary']};
+                font-size: 14px;
+                selection-background-color: {theme['accent']};
+            }}
+            
+            QLineEdit:focus {{
+                border-color: {theme['accent']};
+                background: {theme['surface']};
+            }}
+            
+            /* Buttons */
+            QPushButton {{
+                background: {theme['accent']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 13px;
+            }}
+            
+            QPushButton:hover {{
+                background: {theme['accent_hover']};
+            }}
+            
+            QPushButton:pressed {{
+                background: {theme['accent_pressed']};
+            }}
+            
+            QPushButton:disabled {{
+                background: {theme['surface_variant']};
+                color: {theme['text_tertiary']};
+            }}
+            
+            /* Status Bar */
+            QStatusBar {{
+                background: {theme['statusbar_bg']};
+                border-top: 1px solid {theme['border']};
+                color: {theme['text_secondary']};
+                padding: 4px 12px;
+            }}
+            
+            QStatusBar QLabel {{
+                color: {theme['text_secondary']};
+                padding: 4px 8px;
+            }}
+            
+            /* Progress Bar */
+            QProgressBar {{
+                background: {theme['surface_variant']};
+                border: 1px solid {theme['border']};
+                border-radius: 4px;
+                height: 6px;
+                text-align: center;
+            }}
+            
+            QProgressBar::chunk {{
+                background: {theme['accent']};
+                border-radius: 3px;
+            }}
+            
+            /* Scroll Bars */
+            QScrollBar:vertical {{
+                background: {theme['surface']};
+                width: 12px;
+                border-radius: 6px;
+            }}
+            
+            QScrollBar::handle:vertical {{
+                background: {theme['border']};
+                border-radius: 6px;
+                min-height: 30px;
+            }}
+            
+            QScrollBar::handle:vertical:hover {{
+                background: {theme['text_tertiary']};
+            }}
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            
+            QScrollBar:horizontal {{
+                background: {theme['surface']};
+                height: 12px;
+                border-radius: 6px;
+            }}
+            
+            QScrollBar::handle:horizontal {{
+                background: {theme['border']};
+                border-radius: 6px;
+                min-width: 30px;
+            }}
+            
+            QScrollBar::handle:horizontal:hover {{
+                background: {theme['text_tertiary']};
+            }}
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+            
+            /* List Widget */
+            QListWidget {{
+                background: {theme['surface']};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+                padding: 4px;
+                color: {theme['text_primary']};
+            }}
+            
+            QListWidget::item {{
+                border-radius: 6px;
+                padding: 8px 12px;
+                margin: 2px;
+            }}
+            
+            QListWidget::item:hover {{
+                background: {theme['surface_variant']};
+            }}
+            
+            QListWidget::item:selected {{
+                background: {theme['accent']};
+                color: white;
+            }}
+            
+            /* Completer Popup */
+            QCompleter {{
+                background: {theme['surface_elevated']};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+            }}
+            
+            /* Menu */
+            QMenu {{
+                background: {theme['surface_elevated']};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+                padding: 6px;
+                color: {theme['text_primary']};
+            }}
+            
+            QMenu::item {{
+                padding: 8px 24px 8px 12px;
+                border-radius: 6px;
+            }}
+            
+            QMenu::item:selected {{
+                background: {theme['surface_variant']};
+            }}
+            
+            QMenu::separator {{
+                height: 1px;
+                background: {theme['border']};
+                margin: 4px 8px;
+            }}
+            
+            /* Tooltip */
+            QToolTip {{
+                background: {theme['tooltip_bg']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+        """
+
+class ScrollableTabBar(QtWidgets.QTabBar):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.hovered_close_index = -1
+        self.pressed_close = False
+        self.close_icon = self.create_close_icon()
+        self.setDrawBase(False)
+        self.setElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.setUsesScrollButtons(True)
+        self.setMovable(True)
+        self.setExpanding(False)
+        self._min_tab_width = 120
+        self._max_tab_width = 250
+        self.settings = QtCore.QSettings("PyBrowse", "PyBrowse")
+        self.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        self._default_tab_style = """
+            QTabBar {
+                background: transparent;
+                margin: 0;  /* Remove margins */
+                height: 30px;  /* Fixed height */
+            }
+            QTabBar::tab {
+                background: #e9ecef;
+                border: 1px solid #dee2e6;
+                border-bottom: none;
+                border-radius: 4px 4px 0 0;
+                padding: 8px 16px;
+                margin: 0 2px;
+                font-weight: 500;
+                color: #495057;
+            }
+            QTabBar::tab:selected {
+                background: #f8f9fa;
+                color: #212529;
+                border-bottom: 1px solid white; /* Hide lower border */
+            }
+            QTabBar::tab:hover {
+                background: #f8f9fa;
+            }
+        """
+        self._experimental_tab_style = """
+            QTabBar {
+                background: transparent;
+                margin: 0;
+            }
+            QTabBar::tab {
+                background: #f1f3f5;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                margin: 4px 2px;
+                color: #495057;
+                font-weight: 500;
+                min-width: 120px;
+                max-width: 200px;
+            }
+            QTabBar::tab:selected {
+                background: #e9ecef;
+                color: #212529;
+            }
+            QTabBar::tab:hover {
+                background: #dee2e6;
+            }
+            QTabBar::close-button {
+                image: none;
+                subcontrol-origin: padding;
+                subcontrol-position: right;
+            }
+        """
+        self.apply_style_settings()
+        self.settings.sync()
+        self.shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+        self.shadow.setBlurRadius(4)
+        self.shadow.setColor(QtGui.QColor(0, 0, 0, 10))
+        self.shadow.setOffset(0, 2)
+        self.setGraphicsEffect(self.shadow)
+
+    def create_close_icon(self):
+        pixmap = QtGui.QPixmap(16, 16)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        pen = QtGui.QPen(self.palette().text().color())
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        painter.drawLine(4, 4, 12, 12)
+        painter.drawLine(12, 4, 4, 12)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def tabLayoutChange(self):
+        super().tabLayoutChange()
+        self.updateGeometry()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            close_rect = QtCore.QRect(
+                rect.right() - 24,  # Adjusted positioning
+                rect.center().y() - 6,
+                16,
+                16
+            )
+            # Hover/pressed state
+            if index == self.hovered_close_index:
+                painter.setBrush(QtGui.QColor(0, 0, 0, 20 if not self.pressed_close else 30))
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.drawEllipse(close_rect.center(), 8, 8)
+            # X icon
+            pen = QtGui.QPen(self.palette().text().color())
+            pen.setWidthF(1.8)
+            painter.setPen(pen)
+            offset = 3
+            painter.drawLine(
+                close_rect.center().x() - offset,
+                close_rect.center().y() - offset,
+                close_rect.center().x() + offset,
+                close_rect.center().y() + offset
+            )
+            painter.drawLine(
+                close_rect.center().x() + offset,
+                close_rect.center().y() - offset,
+                close_rect.center().x() - offset,
+                close_rect.center().y() + offset
+            )
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        prev_hover = self.hovered_close_index
+        self.hovered_close_index = -1
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            close_rect = QtCore.QRect(
+                rect.right() - 24,
+                rect.center().y() - 6,
+                16,
+                16
+            )
+            if close_rect.contains(event.pos()):
+                self.hovered_close_index = index
+                break
+        if prev_hover != self.hovered_close_index:
+            self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.pressed_close = self.hovered_close_index != -1
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.pressed_close and self.hovered_close_index != -1:
+            self.tabCloseRequested.emit(self.hovered_close_index)
+        self.pressed_close = False
+        super().mouseReleaseEvent(event)
+
+    def apply_style_settings(self):
+        """Apply modern theme-aware tab styling"""
+        theme = DesignSystem.get_theme()
+        
+        modern_tab_style = f"""
+            QTabBar {{
+                background: transparent;
+                margin: 0;
+            }}
+            QTabBar::tab {{
+                background: {theme['tab_bg']};
+                border: 1px solid {theme['border']};
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 10px 40px 10px 16px;
+                margin: 0 2px;
+                font-weight: 500;
+                color: {theme['text_secondary']};
+                min-width: 100px;
+            }}
+            QTabBar::tab:selected {{
+                background: {theme['tab_active']};
+                color: {theme['text_primary']};
+                border-bottom: 2px solid {theme['accent']};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {theme['tab_hover']};
+            }}
+        """
+        
+        self.setStyleSheet(modern_tab_style)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def tabSizeHint(self, index):
+        available_width = self.width() - 20  # Account for scroll buttons
+        tab_count = max(1, self.count())
+        ideal_width = available_width / tab_count
+        ideal_width = max(self._min_tab_width, min(ideal_width, self._max_tab_width))
+        if (ideal_width * tab_count) <= available_width:
+            return QtCore.QSize(
+                int(available_width / tab_count),
+                super().tabSizeHint(index).height()
+            )
+        else:
+            return QtCore.QSize(self._min_tab_width, super().tabSizeHint(index).height())
+
+    def minimumTabSizeHint(self, index):
+        return QtCore.QSize(self._min_tab_width, super().minimumTabSizeHint(index).height())
 
 class DownloadItemWidget(QtWidgets.QWidget):
     def __init__(self, download_info):
@@ -31,7 +579,7 @@ class DownloadItemWidget(QtWidgets.QWidget):
         
         self.icon = QtWidgets.QLabel()
         pixmap = QtGui.QPixmap(":/icons/file.svg").scaled(24, 24, 
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
         self.icon.setPixmap(pixmap)
         layout.addWidget(self.icon)
         
@@ -40,13 +588,11 @@ class DownloadItemWidget(QtWidgets.QWidget):
         
         self.filename = QtWidgets.QLabel()
         self.set_elided_text(self.filename, self.download_info['file_name'], 300)
-        
+
         self.status_label = QtWidgets.QLabel()
-        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
-        layout.insertWidget(0, self.status_label)
-        
+        self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         content_layout.addWidget(self.filename)
-        content_layout.addWidget(self.status)
+        content_layout.addWidget(self.status_label)
         layout.addLayout(content_layout)
         
         self.progress = QtWidgets.QProgressBar()
@@ -93,7 +639,7 @@ class DownloadItemWidget(QtWidgets.QWidget):
     def update_progress(self, received, total):
         progress = int((received / total) * 100) if total > 0 else 0
         self.progress.setValue(progress)
-        self.status.setText(f"{progress}% • {self.format_speed(received)}")
+        self.status_label.setText(f"{progress}% • {self.format_speed(received)}")
         
     def format_speed(self, bytes_received):
         return f"{bytes_received//1024} KB/s"
@@ -114,7 +660,7 @@ class DownloadItemWidget(QtWidgets.QWidget):
         }
         style = states.get(state, states['active'])
         self.icon.setStyleSheet(f"color: {style['color']};")
-        self.status.setStyleSheet(f"color: {style['color']};")
+        self.status_label.setStyleSheet(f"color: {style['color']};")
 
 class DownloadManager(QtWidgets.QWidget):
     def __init__(self, parent=None):
@@ -122,12 +668,6 @@ class DownloadManager(QtWidgets.QWidget):
         self.setStyleSheet("""
             DownloadManager {
                 background-color: #f8f9fa;
-            }
-            QListWidget {
-                background: white;
-                border: 1px solid #e9ecef;
-                border-radius: 8px;
-                padding: 4px;
             }
         """)
         self.init_ui()
@@ -139,95 +679,124 @@ class DownloadManager(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 24)
         layout.setSpacing(16)
-        
+
         # Header
         header = QtWidgets.QLabel("Downloads")
         header.setStyleSheet("""
-            font-size: 24px;
-            font-weight: 700;
+            font-size: 28px;
+            font-weight: 800;
             color: #212529;
-            padding-bottom: 8px;
+            padding-bottom: 12px;
+            letter-spacing: 1px;
         """)
-        header.setAlignment(QtCore.Qt.AlignCenter)
+        header.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(header)
-        
-        # Downloads List
-        self.download_list = QtWidgets.QListWidget()
-        self.download_list.setStyleSheet("""
-            QListWidget::item {
-                border-bottom: 1px solid #e9ecef;
-                padding: 4px;
-            }
-            QListWidget::item:hover {
-                background-color: #f8f9fa;
-            }
-        """)
-        layout.addWidget(self.download_list)
-        
+
+        # Responsive, grouped card area
+        self.scroll_area = QtWidgets.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("border: none; background: transparent;")
+        self.cards_container = QtWidgets.QWidget()
+        self.cards_layout = QtWidgets.QVBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(0)
+        self.cards_container.setLayout(self.cards_layout)
+        self.scroll_area.setWidget(self.cards_container)
+        layout.addWidget(self.scroll_area)
+
         # Empty State
         self.empty_state = QtWidgets.QWidget()
         empty_layout = QtWidgets.QVBoxLayout()
-        empty_layout.setAlignment(QtCore.Qt.AlignCenter)
-        
+        empty_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         icon = QtWidgets.QLabel()
-        pixmap = QtGui.QPixmap(":/icons/download.svg").scaled(64, 64, 
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        pixmap = QtGui.QPixmap(":/icons/download.svg").scaled(80, 80, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
         icon.setPixmap(pixmap)
         empty_layout.addWidget(icon)
-        
-        text = QtWidgets.QLabel("No active or completed downloads")
-        text.setStyleSheet("""
-            font-size: 16px;
-            color: #868e96;
-            padding-top: 16px;
-        """)
+        text = QtWidgets.QLabel("No downloads yet!\nYour downloads will appear here as beautiful cards.")
+        text.setStyleSheet("font-size: 18px; color: #868e96; padding-top: 18px; font-weight: 500;")
+        text.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(text)
         self.empty_state.setLayout(empty_layout)
         layout.addWidget(self.empty_state)
+        self.empty_state.hide()
+
+        # Grouping: keep track of group headers
+        self.group_headers = {}
         
     def add_download(self, url):
+        url = QUrl(url)
         file_info = QFileInfo(url.path())
-        file_name = file_info.fileName()
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save File", QDir.homePath() + "/Downloads/" + file_name
-        )
-        
+        file_name = file_info.fileName() or "download"
+        save_path, _ = QFileDialog.getSaveFileName(self, "Save File", QDir.homePath() + "/Downloads/" + file_name)
         if save_path:
-            request = QNetworkRequest(QUrl(url))
+            request = QNetworkRequest(url)
             reply = self.network_manager.get(request)
-            
-            item = QtWidgets.QListWidgetItem()
-            widget = DownloadItemWidget({
-                'url': url.toString(),
+            download_info = {
                 'file_name': file_name,
-                'path': save_path,
-                'state': 'active'
-            })
-            item.setSizeHint(widget.sizeHint())
-            
-            self.download_list.addItem(item)
-            self.download_list.setItemWidget(item, widget)
-            self.downloads[reply] = {
-                'item': item,
-                'widget': widget,
-                'file': open(save_path, 'wb')
+                'state': 'active',
+                'received': 0,
+                'total': 0,
+                'speed': 0,
             }
-            reply.downloadProgress.connect(
-                lambda rec, tot, r=reply: self.update_progress(rec, tot, r)
-            )
+            widget = DownloadItemWidget(download_info)
+            # Grouping: Active, Completed, Error
+            group = 'Active'
+            self._add_card_to_group(widget, group)
+            self.downloads[reply] = {
+                'widget': widget,
+                'file': open(save_path, 'wb'),
+                'file_name': file_name,
+                'info': download_info,
+                'group': group
+            }
+            reply.downloadProgress.connect(lambda received, total, r=reply: self.update_progress(received, total, r))
+            reply.readyRead.connect(lambda r=reply: self.save_data(r))
+            self.update_empty_state()
+
+    def _add_card_to_group(self, widget, group):
+        # Add group header if not present
+        if group not in self.group_headers:
+            header = QtWidgets.QLabel(group)
+            header.setStyleSheet("font-size: 20px; font-weight: 700; color: #495057; padding: 18px 0 8px 0;")
+            self.cards_layout.addWidget(header)
+            self.group_headers[group] = header
+        self.cards_layout.addWidget(widget)
             
     def update_progress(self, received, total, reply):
         download = self.downloads.get(reply)
         if download:
-            download['widget'].update_progress(received, total)
+            download['info']['received'] = received
+            download['info']['total'] = total
+            widget = download['widget']
+            widget.update_progress(received, total)
+            
+    def save_data(self, reply):
+        """Save downloaded data to file as it becomes available."""
+        download = self.downloads.get(reply)
+        if download:
+            data = reply.readAll()
+            download['file'].write(data)
             
     def download_finished(self, reply):
         download = self.downloads.get(reply)
         if download:
             download['file'].close()
+            # Move card to Completed group
+            widget = download['widget']
+            widget.download_info['state'] = 'completed'
+            widget.update_state()
+            # Remove from old group and re-add to Completed
+            self.cards_layout.removeWidget(widget)
+            widget.setParent(None)
+            self._add_card_to_group(widget, 'Completed')
             self.downloads.pop(reply)
-            download['widget'].download_info['state'] = 'completed'
-            download['widget'].update_state()
+        self.update_empty_state()
+
+    def update_empty_state(self):
+        """Update the visibility of the empty state widget based on download count."""
+        has_downloads = len(self.downloads) > 0
+        self.empty_state.setVisible(not has_downloads)
+        self.scroll_area.setVisible(has_downloads)
 
 class AboutDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -235,71 +804,68 @@ class AboutDialog(QtWidgets.QDialog):
         self.setWindowTitle("About PyBrowse")
         self.setFixedSize(500, 400)
         
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f8f9fa;
-                font-family: 'Segoe UI', sans-serif;
-            }
+        theme = DesignSystem.get_theme()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {theme['background']};
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            }}
 
-            QLabel {
+            QLabel {{
                 font-size: 14px;
-                color: #495057;
+                color: {theme['text_secondary']};
                 margin: 4px 0;
-            }
+            }}
 
-            QLabel#title {
+            QLabel#title {{
                 font-size: 28px;
                 font-weight: 600;
-                color: #212529;
-            }
+                color: {theme['text_primary']};
+            }}
 
-            QLabel#version {
+            QLabel#version {{
                 font-size: 16px;
-                color: #6c757d;
-            }
+                color: {theme['text_secondary']};
+            }}
             
-            QLabel#links {
+            QLabel#links {{
                 margin-top: 12px;
-            }
+            }}
 
-            QLabel {
-                font-size: 14px;
-                color: #495057;
-                margin: 4px 0;
-            }
-
-            QTextBrowser {
+            QTextBrowser {{
                 background: transparent;
                 border: none;
-                color: #495057;
+                color: {theme['text_secondary']};
                 font-size: 14px;
                 text-align: center;
-            }
+            }}
 
-            QPushButton {
-                background: #e9ecef;
-                border: 1px solid #dee2e6;
-                color: #212529;
-                padding: 8px 32px;
+            QPushButton {{
+                background: {theme['accent']};
+                border: none;
+                border-radius: 6px;
+                color: white;
+                padding: 10px 32px;
                 min-width: 100px;
-            }
+                font-weight: 500;
+            }}
 
-            QPushButton:hover {
-                background: #dee2e6;
-            }
+            QPushButton:hover {{
+                background: {theme['accent_hover']};
+            }}
 
-            QPushButton:pressed {
-                background: #ced4da;
-            }
+            QPushButton:pressed {{
+                background: {theme['accent_pressed']};
+            }}
 
-            QLabel#build_number {
+            QLabel#build_number {{
                 font-size: 12px;
-                color: #868e96;
+                color: {theme['text_tertiary']};
                 padding: 8px 0;
-            }
-            QFrame#separator {
-                color: #dee2e6;
-            }
+            }}
+            QFrame#separator {{
+                color: {theme['border']};
+            }}
         """)
 
         self.init_ui()
@@ -311,25 +877,25 @@ class AboutDialog(QtWidgets.QDialog):
 
         icon = QtWidgets.QLabel()
         pixmap = QtGui.QPixmap(":/icons/app_icon.png").scaled(72, 72, 
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
         icon.setPixmap(pixmap)
-        icon.setAlignment(QtCore.Qt.AlignCenter)
+        icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
         title = QtWidgets.QLabel("PyBrowse")
         title.setObjectName("title")
-        title.setAlignment(QtCore.Qt.AlignCenter)
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
-        version = QtWidgets.QLabel("Version 0.3.0")
+        version = QtWidgets.QLabel("Version 0.3.1")
         version.setObjectName("version")
-        version.setAlignment(QtCore.Qt.AlignCenter)
+        version.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
         desc = QtWidgets.QTextBrowser()
         desc.setPlainText(
-            "A browser written in Python using the PyQt5 libraries. Part of the PySuite group of apps.\n\n"
+            "A browser written in Python using the PyQt6 libraries. Part of the PySuite group of apps.\n\n"
             "© 2024 - 2025 Tay Rake\n"
             "GPL-3.0 License"
         )
-        desc.setAlignment(QtCore.Qt.AlignCenter)
+        desc.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         desc.setFixedHeight(80)
 
         links_layout = QtWidgets.QVBoxLayout()
@@ -337,17 +903,17 @@ class AboutDialog(QtWidgets.QDialog):
         links_layout.setSpacing(10)
 
         separator = QtWidgets.QFrame()
-        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         separator.setObjectName("separator")
         main_layout.addWidget(separator)
 
         bottom_layout = QtWidgets.QHBoxLayout()
         bottom_layout.setContentsMargins(0, 10, 0, 0)
 
-        build_number = QtWidgets.QLabel("Build 0.3.0.200 [Stable Release]\n30-01-2025") # the 4th number is the browser build number; it's to keep track of the amount of changes in between releases. build number resets to 1 after every new release development build (e.g. this release, 0.3.0, will still have a build number like 200 upon full release, it'll only reset in the dev build of 0.3.1)
+        build_number = QtWidgets.QLabel("Build 0.3.1.297 [RC 1]\n11-10-2025") # the 4th number is the browser build number; it's to keep track of the amount of changes in between releases. build number resets to 1 after every new release development build (e.g. this release, 0.3.1, will still have a build number e.g. 140 upon full release, it'll only reset in the dev build of 0.3.1)
                                                                                         # [DEV] is for development builds, [RC] is for release candidates, and nothing is for stable releases (although the build number will still be present for a full release)
         build_number.setObjectName("build_number")                                      # we'd usually have 2 release candidates on average, but it can be more or less depending on the amount of changes
-        build_number.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        build_number.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
 
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
@@ -363,21 +929,20 @@ class AboutDialog(QtWidgets.QDialog):
         main_layout.addWidget(version)
         main_layout.addWidget(desc)
         main_layout.addLayout(links_layout)
-        main_layout.addLayout(btn_layout)
         main_layout.addLayout(bottom_layout)
 
         self.setLayout(main_layout)
 
     def create_centered_link(self, url, text):
         link = QtWidgets.QLabel(f'<a href="{url}" style="color: #0078d4; text-decoration: none;">{text}</a>')
-        link.setAlignment(QtCore.Qt.AlignCenter)
+        link.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         link.linkActivated.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)))
         return link
 
 class StyledCheckBox(QtWidgets.QCheckBox):
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         
         text = self.text()
         font = self.font()
@@ -398,7 +963,7 @@ class StyledCheckBox(QtWidgets.QCheckBox):
         painter.setFont(font)
         painter.setPen(QtGui.QPen(self.palette().text().color()))
         text_rect = QtCore.QRect(box_size + spacing, 0, text_width, self.height())
-        painter.drawText(text_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, text)
+        painter.drawText(text_rect, QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter, text)
 
     def sizeHint(self):
         text_width = self.fontMetrics().horizontalAdvance(self.text())
@@ -414,7 +979,7 @@ class CustomNewTabPage(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         mode_label = QLabel("Private Browsing" if self.is_private else "Normal Browsing")
-        mode_label.setAlignment(Qt.AlignCenter)
+        mode_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(mode_label)
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("Search or enter address")
@@ -439,7 +1004,7 @@ class CustomNewTabPage(QWidget):
         if not self.is_private:
             weather_label = QLabel("Weather: Placeholder")
             layout.addWidget(weather_label)
-            news_label = QLabel("Latest News: PyBrowse 0.3.0 Released!")
+            news_label = QLabel("Latest News: PyBrowse 0.3.1 Released!")
             layout.addWidget(news_label)
 
         self.setLayout(layout)
@@ -509,6 +1074,7 @@ class AccessibilityPage(QtWidgets.QWidget):
                 background: url(:/icons/bullet.svg) left center no-repeat;
             }
         """)
+        self.settings = QtCore.QSettings("PyBrowse", "PyBrowse")
         self.init_ui()
 
     def init_ui(self):
@@ -517,25 +1083,53 @@ class AccessibilityPage(QtWidgets.QWidget):
         main_layout.setSpacing(8)
 
         # Header Section
-        header = QtWidgets.QLabel("Accessibility Features")
-        header.setAlignment(QtCore.Qt.AlignCenter)
+        header = QtWidgets.QLabel("Accessibility Settings")
+        header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setStyleSheet("""
-            font-size: 24px;
+            font-size: 26px;
             font-weight: 700;
             color: #212529;
             padding-bottom: 16px;
         """)
         main_layout.addWidget(header)
 
-        # Toggles Section
-        toggles_layout = QtWidgets.QVBoxLayout()
-        self.high_contrast_toggle = self.create_toggle("High Contrast Mode", ":/icons/contrast.svg")
-        self.tts_toggle = self.create_toggle("Text-to-Speech", ":/icons/tts.svg")
-        toggles_layout.addWidget(self.high_contrast_toggle)
-        toggles_layout.addWidget(self.tts_toggle)
+        # Toggles Section (with labels, tooltips, and state)
+        toggles_layout = QtWidgets.QFormLayout()
+        toggles_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        toggles_layout.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        toggles_layout.setHorizontalSpacing(24)
+        toggles_layout.setVerticalSpacing(12)
+
+        # Use QLabel with icon pixmap for the label
+        contrast_icon_label = QtWidgets.QLabel()
+        contrast_icon_label.setPixmap(QtGui.QPixmap(":/icons/contrast.svg").scaled(20, 20, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation))
+        contrast_icon_label.setToolTip("High Contrast Mode")
+        self.high_contrast_switch = StyledCheckBox("Enable High Contrast Mode")
+        self.high_contrast_switch.setToolTip("Switch to a high-contrast color scheme for better visibility.")
+        # Restore state from settings
+        high_contrast_enabled = self.settings.value("accessibility/high_contrast", False, type=bool)
+        self.high_contrast_switch.setChecked(high_contrast_enabled)
+        self.high_contrast_switch.stateChanged.connect(self.toggle_high_contrast)
+        toggles_layout.addRow(contrast_icon_label, self.high_contrast_switch)
+
+        tts_icon_label = QtWidgets.QLabel()
+        tts_icon_label.setPixmap(QtGui.QPixmap(":/icons/tts.svg").scaled(20, 20, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation))
+        tts_icon_label.setToolTip("Text-to-Speech")
+        self.tts_switch = StyledCheckBox("Enable Text-to-Speech")
+        self.tts_switch.setToolTip("Read web page content aloud using text-to-speech.")
+        tts_enabled = self.settings.value("accessibility/tts", False, type=bool)
+        self.tts_switch.setChecked(tts_enabled)
+        self.tts_switch.stateChanged.connect(self.toggle_tts)
+        toggles_layout.addRow(tts_icon_label, self.tts_switch)
+
+        # Add shortcut info for toggles
+        shortcut_label = QtWidgets.QLabel("Shortcut: Alt+Shift+S (Screen Reader)")
+        shortcut_label.setStyleSheet("color: #868e96; font-size: 13px;")
+        toggles_layout.addRow("", shortcut_label)
+
         main_layout.addLayout(toggles_layout)
 
-        # Features Scroll Area
+        # Features Scroll Area (unchanged)
         scroll_area = QtWidgets.QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_content = QtWidgets.QWidget()
@@ -543,59 +1137,40 @@ class AccessibilityPage(QtWidgets.QWidget):
         scroll_layout.setContentsMargins(0, 0, 12, 0)
         scroll_layout.setSpacing(16)
 
-        # Feature Sections
         self.add_feature_section(scroll_layout, "Navigation",
                                 ["Keyboard-first navigation design",
                                  "Focus indicators for interactive elements",
                                  "Semantic HTML structure support"])
-                                 
         self.add_feature_section(scroll_layout, "Visual Adjustments",
                                 ["Dynamic text scaling (Ctrl + Mouse Wheel)",
                                  "High contrast color schemes",
                                  "Reduced motion preferences"])
-                                 
         self.add_feature_section(scroll_layout, "Compatibility",
                                 ["Screen reader optimized (NVDA, JAWS, VoiceOver)",
                                  "Braille display support",
                                  "Keyboard navigation profiles"])
-
         self.add_shortcut_section(scroll_layout)
 
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area)
+
+        # Accessibility: set tab order for keyboard navigation
+        self.setTabOrder(self.high_contrast_switch, self.tts_switch)
+        self.setTabOrder(self.tts_switch, self)
+
+        # Focus first toggle by default
+        self.high_contrast_switch.setFocus()
+
+    def save_settings(self):
+        self.settings.setValue("accessibility/high_contrast", self.high_contrast_switch.isChecked())
+        self.settings.setValue("accessibility/tts", self.tts_switch.isChecked())
+        self.settings.sync()
+
+    def closeEvent(self, event):
+        self.save_settings()
+        super().closeEvent(event)
     
-    def create_toggle(self, text, icon_path):
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(container)
-        layout.setContentsMargins(12, 8, 12, 8)
-        
-        icon = QtWidgets.QLabel()
-        pixmap = QtGui.QPixmap(icon_path).scaled(24, 24, 
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        icon.setPixmap(pixmap)
-        
-        label = QtWidgets.QLabel(text)
-        label.setStyleSheet("font-size: 15px; color: #212529;")
-        
-        toggle = StyledCheckBox()
-        toggle.setStyleSheet("""
-            QCheckBox::indicator { width: 48px; height: 28px; }
-            QCheckBox::indicator:unchecked { image: url(:/icons/toggle_off.svg); }
-            QCheckBox::indicator:checked { image: url(:/icons/toggle_on.svg); }
-        """)
-        
-        layout.addWidget(icon)
-        layout.addWidget(label)
-        layout.addStretch()
-        layout.addWidget(toggle)
-        
-        container.setStyleSheet("""
-            background-color: white;
-            border-radius: 8px;
-            border: 1px solid #e9ecef;
-        """)
-        
-        return container
+    # Removed: create_toggle (replaced with direct switches and labels for clarity)
 
     def add_feature_section(self, layout, title, items):
         section = QtWidgets.QGroupBox(title)
@@ -660,17 +1235,23 @@ class AccessibilityPage(QtWidgets.QWidget):
         layout.addWidget(section)
     
     def toggle_high_contrast(self, state):
-        if state == QtCore.Qt.Checked:
-            self.window().setStyleSheet("""
+        if state == QtCore.Qt.CheckState.Checked:
+            QtWidgets.QApplication.instance().setStyleSheet("""
                 QWidget { background-color: black; color: white; }
                 QLineEdit { background-color: white; color: black; }
                 QPushButton { background-color: white; color: black; }
             """)
         else:
-            self.window().setStyleSheet("")
+            QtWidgets.QApplication.instance().setStyleSheet("")
+        self.save_settings()
     
     def toggle_tts(self, state):
-        print("Text-to-speech toggled:", state == QtCore.Qt.Checked)
+        # This would enable/disable TTS globally; here we just print, but you could connect to app logic
+        if state == QtCore.Qt.CheckState.Checked:
+            QtWidgets.QMessageBox.information(self, "Text-to-Speech Enabled", "Text-to-Speech is now enabled. Select text and use the context menu to read aloud.")
+        else:
+            QtWidgets.QMessageBox.information(self, "Text-to-Speech Disabled", "Text-to-Speech is now disabled.")
+        self.save_settings()
 
     def add_section(self, layout, title, items):
         section_title = QtWidgets.QLabel(title)
@@ -686,69 +1267,8 @@ class AccessibilityPage(QtWidgets.QWidget):
             layout.addWidget(label)
         layout.addSpacing(10)
 
-class DownloadManager(QtWidgets.QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.init_ui()
-        self.network_manager = QNetworkAccessManager()
-        self.network_manager.finished.connect(self.download_finished)
-        self.downloads = {}
-        print("DownloadManager initialized")
 
-    def init_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        self.download_list = QtWidgets.QListWidget()
-        layout.addWidget(self.download_list)
-
-    def add_download(self, url):
-        print(f"Adding download for URL: {url}")
-        url = QUrl(url)
-        file_info = QFileInfo(url.path())
-        file_name = file_info.fileName()
-        if not file_name:
-            file_name = "download"
-        save_path, _ = QFileDialog.getSaveFileName(self, "Save File", QDir.homePath() + "/Downloads/" + file_name)
-        if save_path:
-            print(f"Saving file to: {save_path}")
-            request = QNetworkRequest(url)
-            reply = self.network_manager.get(request)
-            item = QListWidgetItem(f"Downloading: {file_name}")
-            self.download_list.addItem(item)
-            progress_bar = QProgressBar(self.download_list)
-            self.download_list.setItemWidget(item, progress_bar)
-            self.downloads[reply] = {
-                "item": item,
-                "progress_bar": progress_bar,
-                "file": open(save_path, "wb"),
-                "file_name": file_name
-            }
-            reply.downloadProgress.connect(lambda received, total, r=reply: self.update_progress(received, total, r))
-            reply.readyRead.connect(lambda r=reply: self.save_data(r))
-        else:
-            print("File save cancelled by user")
-
-    def update_progress(self, received, total, reply):
-        download = self.downloads.get(reply)
-        if download:
-            progress = int(received * 100 / total)
-            download["progress_bar"].setValue(progress)
-            download["item"].setText(f"Downloading: {download['file_name']} - {progress}%")
-
-    def save_data(self, reply):
-        download = self.downloads.get(reply)
-        if download:
-            download["file"].write(reply.readAll())
-
-    def download_finished(self, reply):
-        download = self.downloads.get(reply)
-        if download:
-            download["file"].close()
-            self.downloads.pop(reply)
-            download["item"].setText(f"Completed: {download['file_name']}")
-            download["progress_bar"].setValue(100)
-        reply.deleteLater()
-
-class AdBlocker(QWebEngineUrlRequestInterceptor):
+class AdBlocker(QtCore.QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.ad_hosts = set()
@@ -823,76 +1343,92 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
             self.tracker_hosts.update([
                 'analytics.google.com',
                 'facebook.com',
-                'tracking.example.com',
             ])
 
-    def interceptRequest(self, info):
-        url = info.requestUrl()
-        if self.should_block_ad(url) or self.should_block_tracker(url):
-            info.block(True)
-
-    def should_block_ad(self, url):
-        return any(url.host().endswith(host) for host in self.ad_hosts)
-
-    def should_block_tracker(self, url):
-        return any(url.host().endswith(host) for host in self.tracker_hosts)
-
-# TODO: This new tab overhaul is very sloppy. I don't feel like this code is super polished and there are probably some gaping holes I'm too tired to fix, or even spot. Maybe in some future version I'll go over this code again
-class ScrollableTabBar(QtWidgets.QTabBar):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMouseTracking(True)
-        self.hovered_close_index = -1
-        self.pressed_close = False
-        self.close_icon = self.create_close_icon()
-        self.setDrawBase(False)
-        self.setElideMode(QtCore.Qt.ElideRight)
-        self.setUsesScrollButtons(True)
-        self.setMovable(True)
-        self.setExpanding(False)
-        self._min_tab_width = 120
-        self._max_tab_width = 250
-        self.settings = QtCore.QSettings("PyBrowse", "PyBrowse")
-        self.apply_style_settings()
-        self.settings.sync()
-        self.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
-        self.setStyleSheet("""
-            QTabBar {
-                background: transparent;
-                margin: 0;  /* Remove margins */
-                height: 30px;  /* Fixed height */
-            }
-            QTabBar::tab {
-                background: #e9ecef;
-                border: 1px solid #dee2e6;
-                border-bottom: none;
-                border-radius: 4px 4px 0 0;
-                padding: 8px 16px;
-                margin: 0 2px;
-                font-weight: 500;
-                color: #495057;
-            }
-            QTabBar::tab:selected {
-                background: #f8f9fa;
-                color: #212529;
-                border-bottom: 1px solid white; /* Hide lower border */
-            }
-            QTabBar::tab:hover {
-                background: #f8f9fa;
+    def init_ui(self):
+        card = QtWidgets.QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background: white;
+                border-radius: 14px;
+                border: 1.5px solid #e9ecef;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+                margin-bottom: 8px;
             }
         """)
-        self.shadow = QtWidgets.QGraphicsDropShadowEffect(self)
-        self.shadow.setBlurRadius(4)
-        self.shadow.setColor(QtGui.QColor(0, 0, 0, 10))
-        self.shadow.setOffset(0, 2)
-        self.setGraphicsEffect(self.shadow)
+        card_layout = QtWidgets.QHBoxLayout(card)
+        card_layout.setContentsMargins(18, 12, 18, 12)
+        card_layout.setSpacing(18)
+
+        self.icon = QtWidgets.QLabel()
+        pixmap = QtGui.QPixmap(":/icons/file.svg").scaled(32, 32, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+        self.icon.setPixmap(pixmap)
+        self.icon.setFixedSize(36, 36)
+        card_layout.addWidget(self.icon)
+
+        content_layout = QtWidgets.QVBoxLayout()
+        content_layout.setSpacing(2)
+
+        self.filename = QtWidgets.QLabel()
+        self.filename.setStyleSheet("font-size: 16px; font-weight: 600; color: #212529;")
+        self.set_elided_text(self.filename, self.download_info['file_name'], 320)
+
+        self.status_label = QtWidgets.QLabel()
+        self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.status_label.setStyleSheet("font-size: 13px; color: #868e96;")
+
+        content_layout.addWidget(self.filename)
+        content_layout.addWidget(self.status_label)
+        card_layout.addLayout(content_layout, 2)
+
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                height: 8px;
+                background: #f1f3f5;
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background: #4dabf7;
+                border-radius: 4px;
+            }
+        """)
+        self.progress.setValue(0)
+        self.progress.setFixedWidth(120)
+        card_layout.addWidget(self.progress, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+        control_layout = QtWidgets.QHBoxLayout()
+        control_layout.setSpacing(6)
+
+        self.pause_btn = QtWidgets.QPushButton()
+        self.pause_btn.setIcon(QtGui.QIcon(":/icons/pause.svg"))
+        self.pause_btn.setStyleSheet("padding: 4px; border-radius: 4px; background: #f8f9fa;")
+        self.pause_btn.setFixedSize(28, 28)
+        self.pause_btn.clicked.connect(self.toggle_pause)
+
+        self.cancel_btn = QtWidgets.QPushButton()
+        self.cancel_btn.setIcon(QtGui.QIcon(":/icons/close.svg"))
+        self.cancel_btn.setStyleSheet("padding: 4px; border-radius: 4px; background: #f8f9fa;")
+        self.cancel_btn.setFixedSize(28, 28)
+        self.cancel_btn.clicked.connect(self.cancel_download)
+
+        control_layout.addWidget(self.pause_btn)
+        control_layout.addWidget(self.cancel_btn)
+        card_layout.addLayout(control_layout)
+
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(card)
+        self.setLayout(main_layout)
+        self.update_state()
     
     def create_close_icon(self):
         pixmap = QtGui.QPixmap(16, 16)
         pixmap.fill(QtCore.Qt.transparent)
         
         painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         pen = QtGui.QPen(self.palette().text().color())
         pen.setWidthF(1.5)
         painter.setPen(pen)
@@ -910,7 +1446,7 @@ class ScrollableTabBar(QtWidgets.QTabBar):
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         
         for index in range(self.count()):
             rect = self.tabRect(index)
@@ -967,7 +1503,7 @@ class ScrollableTabBar(QtWidgets.QTabBar):
             self.update()
     
     def mousePressEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
             self.pressed_close = self.hovered_close_index != -1
         super().mousePressEvent(event)
     
@@ -979,49 +1515,13 @@ class ScrollableTabBar(QtWidgets.QTabBar):
 
     def apply_style_settings(self):
         experimental_style = self.settings.value("experimental/tab_style", False, bool)
-    
         if experimental_style:
-            self.setStyleSheet("""
-            QTabBar {
-                background: transparent;
-                margin: 0;
-            }
-                
-            QTabBar::tab {
-                background: #f1f3f5;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                margin: 4px 2px;
-                color: #495057;
-                font-weight: 500;
-                min-width: 120px;
-                max-width: 200px;
-            }
-                
-            QTabBar::tab:selected {
-                background: #e9ecef;
-                color: #212529;
-            }
-                
-            QTabBar::tab:hover {
-                background: #dee2e6;
-            }
-                
-            QTabBar::close-button {
-                image: none;
-                subcontrol-origin: padding;
-                subcontrol-position: right;
-            }  
-            """)
-            self.style().unpolish(self)
-            self.style().polish(self)
-            self.update()
+            self.setStyleSheet(self._experimental_tab_style)
         else:
-            self.setStyleSheet("")
-            self.style().unpolish(self)
-            self.style().polish(self)
-            self.update()
+            self.setStyleSheet(self._default_tab_style)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def tabSizeHint(self, index):
         # Calculate available width minus scroll buttons if needed
@@ -1087,7 +1587,7 @@ class TabWidget(QtWidgets.QTabWidget):
         if action:
             self.setCurrentIndex(action.data())
 
-class CustomWebEnginePage(QtWebEngineWidgets.QWebEnginePage):
+class CustomWebEnginePage(QWebEnginePage):
     console_message = QtCore.pyqtSignal(str)
 
     def javaScriptConsoleMessage(self, level, message, line, source):
@@ -1098,11 +1598,13 @@ class BrowserTab(QWebEngineView):
         super().__init__(parent)
         self.reader_mode_active = False
         self.original_html = None
+        self.tts_engine = None
+        self.thread_pool = QThreadPool()
         self.settings().setAttribute(
-            QWebEngineSettings.PlaybackRequiresUserGesture, False
+            QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False
         )
         self.settings().setAttribute(
-            QWebEngineSettings.LocalStorageEnabled, True
+            QWebEngineSettings.WebAttribute.LocalStorageEnabled, True
         )
         self.image_url = None
         self.profile = profile or QWebEngineProfile.defaultProfile()
@@ -1142,7 +1644,7 @@ class BrowserTab(QWebEngineView):
     def contextMenuEvent(self, event):
         local_pos = event.pos()
         global_pos = event.globalPos()
-        
+
         js_code = f"""
             (function() {{
                 try {{
@@ -1159,34 +1661,50 @@ class BrowserTab(QWebEngineView):
                 }}
             }})()
         """
-        
+
         def handle_result(result):
             menu = QMenu(self)
             image_found = False
-            
-            if result and 'src' in result:
-                try:
-                    img_pos = QPoint(int(result['x']), int(result['y']))
-                    adjusted_global_pos = self.mapToGlobal(img_pos)
-                    
-                    menu.addAction(QIcon(":/icons/download.svg"), "Download Image", 
-                                 lambda: self.window().download_manager.add_download(result['src']))
-                    menu.addAction(QIcon(":/icons/copy.svg"), "Copy Image Address",
-                                 lambda: QApplication.clipboard().setText(result['src']))
-                    menu.addSeparator()
-                    image_found = True
-                except Exception as e:
-                    print("Image action error:", e)
-            
-            standard_menu = self.page().createStandardContextMenu()
-            for action in standard_menu.actions():
-                if image_found and action.text().lower() in ["save image", "copy image"]:
-                    continue
-                menu.addAction(action)
-            
-            menu.exec(adjusted_global_pos if image_found else global_pos)
+
+            # Check if TTS is enabled in settings
+            tts_enabled = QtCore.QSettings("PyBrowse", "PyBrowse").value("accessibility/tts", False, type=bool)
+            if tts_enabled:
+                # Get selected text from the page
+                self.page().runJavaScript("window.getSelection().toString();", lambda selected_text: self._add_tts_action(menu, selected_text, result, global_pos))
+            else:
+                self._add_tts_action(menu, None, result, global_pos)
 
         self.page().runJavaScript(js_code, handle_result)
+
+    def _add_tts_action(self, menu, selected_text, result, global_pos):
+        image_found = False
+        adjusted_global_pos = global_pos
+        if result and 'src' in result:
+            try:
+                img_pos = QPoint(int(result['x']), int(result['y']))
+                adjusted_global_pos = self.mapToGlobal(img_pos)
+                menu.addAction(QIcon(":/icons/download.svg"), "Download Image", 
+                             lambda: self.window().download_manager.add_download(result['src']))
+                menu.addAction(QIcon(":/icons/copy.svg"), "Copy Image Address",
+                             lambda: QApplication.clipboard().setText(result['src']))
+                menu.addSeparator()
+                image_found = True
+            except Exception as e:
+                print("Image action error:", e)
+
+        # Add TTS action if enabled and text is selected
+        tts_enabled = QtCore.QSettings("PyBrowse", "PyBrowse").value("accessibility/tts", False, type=bool)
+        if tts_enabled and selected_text and selected_text.strip():
+            menu.addAction(QIcon(), "Read Aloud", lambda: self.speak_text(selected_text.strip()))
+            menu.addSeparator()
+
+        standard_menu = self.page().createStandardContextMenu()
+        for action in standard_menu.actions():
+            if image_found and action.text().lower() in ["save image", "copy image"]:
+                continue
+            menu.addAction(action)
+
+        menu.exec(adjusted_global_pos if image_found else global_pos)
 
     def speak_text(self, text):
         if self.tts_engine is not None:
@@ -1261,11 +1779,11 @@ class BrowserTab(QWebEngineView):
     
     def save_page(self):
         dialog = QtWidgets.QFileDialog(self)
-        dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptSave)
+        dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
         dialog.setNameFilter("Web Page, Complete (*.html)")
-        if dialog.exec_() == QtWidgets.QFileDialog.Accepted:
+        if dialog.exec() == QtWidgets.QFileDialog.DialogCode.Accepted:
             path = dialog.selectedFiles()[0]
-            self.page().save(path, QtWebEngineWidgets.QWebEngineDownloadItem.CompleteHtmlSaveFormat)
+            self.page().save(path, QWebEngineDownloadRequest.SavePageFormat.CompleteHtmlSaveFormat)
     
     def toggle_reader_mode(self):
         if not self.reader_mode_active:
@@ -1337,8 +1855,8 @@ class PrivateBrowserTab(BrowserTab):
         super().__init__(url, profile, parent)
         self.profile = profile or QWebEngineProfile(None)
         self.page = QWebEnginePage(self.profile, self)
-        self.web_page.settings().setAttribute(QWebEngineSettings.LocalStorageEnabled, False)
-        self.web_page.settings().setAttribute(QWebEngineSettings.JavascriptEnabled, True)
+        self.web_page.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
+        self.web_page.settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         self.setPage(self.page)
         self.setUrl(QUrl(url))
         self.page().setLifecycleState(QWebEnginePage.LifecycleState.Active)
@@ -1392,13 +1910,13 @@ class HistoryPage(QtWidgets.QWidget):
         dialog.setWindowTitle("Clear History")
         dialog.setText("This will permanently remove all browsing history.")
         dialog.setInformativeText("Are you sure you want to continue?")
-        dialog.setIcon(QtWidgets.QMessageBox.Warning)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         dialog.setStandardButtons(
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
         )
-        dialog.setDefaultButton(QtWidgets.QMessageBox.No)
+        dialog.setDefaultButton(QtWidgets.QMessageBox.StandardButton.No)
         
-        if dialog.exec_() == QtWidgets.QMessageBox.Yes:
+        if dialog.exec() == QtWidgets.QMessageBox.StandardButton.Yes:
             self.history_data.clear()
             self.load_history(self.history_data)
             self.update_empty_state()
@@ -1526,9 +2044,9 @@ class HistoryPage(QtWidgets.QWidget):
         
         icon = QtWidgets.QLabel()
         pixmap = QtGui.QPixmap(":/icons/clock.svg").scaled(64, 64, 
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
         icon.setPixmap(pixmap)
-        icon.setAlignment(QtCore.Qt.AlignCenter)
+        icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         
         text = QtWidgets.QLabel("No browsing history available")
         text.setStyleSheet("""
@@ -1631,138 +2149,218 @@ class HistoryItemWidget(QtWidgets.QWidget):
 
     def load_favicon(self):
         pixmap = QtGui.QPixmap(":/icons/globe.svg").scaled(16, 16,
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
         self.favicon.setPixmap(pixmap)
 
 class SettingsDialog(QtWidgets.QDialog):
     settings_changed = QtCore.pyqtSignal()
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f8f9fa;
-                font-family: 'Segoe UI', sans-serif;
-            }
+        
+        # Apply modern design system
+        theme = DesignSystem.get_theme()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {theme['background']};
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            }}
 
-            QGroupBox {
-                border: 1px solid #dee2e6;
-                border-radius: 0;
+            QGroupBox {{
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
                 margin-top: 20px;
-                padding-top: 15px;
+                padding: 16px;
                 font-weight: 500;
-                color: #212529;
+                color: {theme['text_primary']};
                 font-size: 14px;
-            }
+                background: {theme['surface']};
+            }}
 
-            QGroupBox::title {
+            QGroupBox::title {{
                 subcontrol-origin: margin;
+                subcontrol-position: top left;
                 left: 12px;
-                padding: 0 4px;
-            }
+                padding: 0 8px;
+                background: {theme['surface']};
+            }}
 
-            QLineEdit {
-                border: 1px solid #dee2e6;
-                border-radius: 0;
-                padding: 8px 12px;
+            QLineEdit {{
+                border: 1px solid {theme['input_border']};
+                border-radius: 6px;
+                padding: 10px 14px;
                 font-size: 14px;
-                background: white;
-                selection-background-color: #e2e6ea;
+                background: {theme['input_bg']};
+                color: {theme['text_primary']};
+                selection-background-color: {theme['accent']};
+                selection-color: white;
                 min-width: 300px;
-            }
+            }}
 
-            QLineEdit:focus {
-                border-color: #adb5bd;
-            }
+            QLineEdit:focus {{
+                border-color: {theme['accent']};
+                background: {theme['surface']};
+            }}
 
-            QComboBox {
-                border: 1px solid #dee2e6;
-                border-radius: 0;
-                padding: 8px 12px;
-                background: white;
+            QComboBox {{
+                border: 1px solid {theme['input_border']};
+                border-radius: 6px;
+                padding: 10px 14px;
+                background: {theme['input_bg']};
+                color: {theme['text_primary']};
                 min-width: 200px;
-            }
+            }}
 
-            QComboBox::drop-down {
-                border: 0;
-                width: 20px;
-            }
+            QComboBox:focus {{
+                border-color: {theme['accent']};
+            }}
 
-            QComboBox QAbstractItemView {
-                border: 1px solid #dee2e6;
-                selection-background-color: #f1f3f5;
-                selection-color: #212529;
-            }
+            QComboBox::drop-down {{
+                border: none;
+                width: 24px;
+                padding-right: 4px;
+            }}
 
-            QCheckBox {
-                spacing: 0;
-            }
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {theme['text_secondary']};
+                margin-right: 6px;
+            }}
 
-            QCheckBox::indicator {
-                width: 0;
-                height: 0;
-            }
+            QComboBox QAbstractItemView {{
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                background: {theme['surface_elevated']};
+                selection-background-color: {theme['accent']};
+                selection-color: white;
+                padding: 4px;
+                color: {theme['text_primary']};
+            }}
 
-            QDialogButtonBox QPushButton {
-                background: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 0;
-                padding: 8px 16px;
+            QComboBox QAbstractItemView::item {{
+                padding: 8px 12px;
+                border-radius: 4px;
+                min-height: 24px;
+            }}
+
+            QComboBox QAbstractItemView::item:hover {{
+                background: {theme['surface_variant']};
+            }}
+
+            QCheckBox {{
+                spacing: 8px;
+                color: {theme['text_primary']};
+            }}
+
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 2px solid {theme['border']};
+                background: {theme['input_bg']};
+            }}
+
+            QCheckBox::indicator:hover {{
+                border-color: {theme['accent']};
+            }}
+
+            QCheckBox::indicator:checked {{
+                background: {theme['accent']};
+                border-color: {theme['accent']};
+                image: none;
+            }}
+
+            QCheckBox::indicator:checked::after {{
+                content: "✓";
+                color: white;
+            }}
+
+            QDialogButtonBox QPushButton {{
+                background: {theme['surface_variant']};
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                padding: 10px 20px;
                 min-width: 80px;
-            }
+                color: {theme['text_primary']};
+                font-weight: 500;
+            }}
             
-            QDialogButtonBox QPushButton:hover {
-                background: #e9ecef;
-            }
+            QDialogButtonBox QPushButton:hover {{
+                background: {theme['surface']};
+                border-color: {theme['accent']};
+            }}
             
-            QDialogButtonBox QPushButton:pressed {
-                background: #dee2e6;
-            }
+            QDialogButtonBox QPushButton:pressed {{
+                background: {theme['accent']};
+                color: white;
+            }}
 
-            QPushButton {
-                background: #e9ecef;
-                border: 1px solid #dee2e6;
-                color: #212529;
-                padding: 8px 16px;
+            QDialogButtonBox QPushButton[text="OK"] {{
+                background: {theme['accent']};
+                color: white;
+                border-color: {theme['accent']};
+            }}
+
+            QDialogButtonBox QPushButton[text="OK"]:hover {{
+                background: {theme['accent_hover']};
+            }}
+
+            QDialogButtonBox QPushButton[text="OK"]:pressed {{
+                background: {theme['accent_pressed']};
+            }}
+
+            QPushButton {{
+                background: {theme['accent']};
+                border: none;
+                border-radius: 6px;
+                color: white;
+                padding: 10px 20px;
                 min-width: 80px;
-            }
+                font-weight: 500;
+            }}
             
-            QPushButton:hover {
-                background: #dee2e6;
-            }
+            QPushButton:hover {{
+                background: {theme['accent_hover']};
+            }}
             
-            QPushButton:pressed {
-                background: #ced4da;
-            }
-            
-            QPushButton:focus {
-                border-color: #adb5bd;
-            }
+            QPushButton:pressed {{
+                background: {theme['accent_pressed']};
+            }}
 
-            QLabel[accessibleName="section_header"] {
+            QLabel {{
+                color: {theme['text_primary']};
+            }}
+
+            QLabel[accessibleName="section_header"] {{
                 font-size: 16px;
                 font-weight: 600;
-                color: #212529;
+                color: {theme['text_primary']};
                 margin-bottom: 12px;
-            }
+            }}
 
-            QWidget#experimental_section {
-                border-top: 1px solid #dee2e6;
+            QWidget#experimental_section {{
+                border-top: 1px solid {theme['border']};
                 padding-top: 16px;
                 margin-top: 16px;
-            }
+            }}
         """)
         self.setWindowTitle("Settings")
+        self.setMinimumWidth(500)
         self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.setSpacing(16)
+        self.layout.setContentsMargins(20, 20, 20, 20)
 
         search_engine_group = QtWidgets.QGroupBox("Search Engine")
         search_engine_layout = QtWidgets.QVBoxLayout()
+        search_engine_layout.setSpacing(12)
 
         self.search_engine_combo = QtWidgets.QComboBox()
         self.search_engine_combo.addItems(["Google", "Bing", "DuckDuckGo", "Yandex", "Custom"])
         search_engine_layout.addWidget(self.search_engine_combo)
 
         self.custom_search_engine_input = QtWidgets.QLineEdit()
-        self.custom_search_engine_input.setPlaceholderText("Enter custom search URL...")
+        self.custom_search_engine_input.setPlaceholderText("Enter custom search URL (use {query} for search term)...")
         search_engine_layout.addWidget(self.custom_search_engine_input)
 
         search_engine_group.setLayout(search_engine_layout)
@@ -1770,6 +2368,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
         experimental_group = QtWidgets.QGroupBox("Experiments")
         experimental_layout = QtWidgets.QVBoxLayout()
+        experimental_layout.setSpacing(12)
 
         self.tab_style_toggle = StyledCheckBox("Experimental Tab Styling")
         experimental_layout.addWidget(self.tab_style_toggle)
@@ -1781,8 +2380,8 @@ class SettingsDialog(QtWidgets.QDialog):
 
         # Buttons
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            QtCore.Qt.Horizontal, self)
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel,
+            QtCore.Qt.Orientation.Horizontal, self)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self.layout.addWidget(buttons)
@@ -1833,9 +2432,9 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.history = []
         self.is_fullscreen = False
         self.default_profile = QWebEngineProfile.defaultProfile()
-        self.default_profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
+        self.default_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         self.private_profile = QWebEngineProfile("private")
-        self.private_profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
+        self.private_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
         self.central_widget = QtWidgets.QWidget(self)
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
@@ -1845,12 +2444,16 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.layout.addWidget(self.tabs)
         self.completer_model = QtCore.QStringListModel()
         self.completer = QCompleter(self.completer_model, self) 
-        self.completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self.completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         self.create_navigation_bar()
         self.layout.addWidget(self.navigation_bar)
         self.tabs.currentChanged.connect(self.activate_current_tab)
         self.url_bar.setCompleter(self.completer)
         self.url_bar.textEdited.connect(self.fetch_search_suggestions)
+        
+        # Create status bar
+        self.create_status_bar()
+        
         self.load_bookmarks()
         self.load_history()
         self.load_user_settings()
@@ -1861,23 +2464,38 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.search_timer = QtCore.QTimer()
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.fetch_search_suggestions)
-        self.setStyleSheet("""
-            QMainWindow {
-                background: #ffffff;
-                border: none;
-            }
-            QToolBar {
-                background: #f8f9fa;
-                border-bottom: 1px solid #dee2e6;
-                padding: 4px;
-            }
-            QLineEdit {
-                border: 1px solid #dee2e6;
-                border-radius: 0;
-                padding: 6px 12px;
-                font-size: 14px;
-            }
-        """)
+        
+        # Add keyboard shortcuts for zoom
+        self.zoom_in_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+="), self)
+        self.zoom_in_shortcut.activated.connect(lambda: self.zoom_page(0.1))
+        self.zoom_out_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+-"), self)
+        self.zoom_out_shortcut.activated.connect(lambda: self.zoom_page(-0.1))
+        self.reset_zoom_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), self)
+        self.reset_zoom_shortcut.activated.connect(self.reset_zoom)
+        
+        # Apply modern design system
+        self.apply_modern_theme()
+    
+    def apply_modern_theme(self):
+        """Apply the modern design system theme"""
+        self.setStyleSheet(DesignSystem.get_stylesheet())
+    
+    def eventFilter(self, obj, event):
+        """Detect system theme changes"""
+        if event.type() == QtCore.QEvent.Type.ApplicationPaletteChange:
+            # System theme changed, reapply our theme
+            QtCore.QTimer.singleShot(0, self.refresh_theme)
+        return super().eventFilter(obj, event)
+    
+    def refresh_theme(self):
+        """Refresh theme after system palette change"""
+        self.apply_modern_theme()
+        # Update all tab bars
+        tab_bar = self.tabs.tabBar()
+        if isinstance(tab_bar, ScrollableTabBar):
+            tab_bar.apply_style_settings()
+        # Refresh status bar with new theme
+        self.refresh_status_bar_theme()
     
     def handle_text_changes(self):
         if not self.url_bar.text():
@@ -1888,6 +2506,7 @@ class PyBrowse(QtWidgets.QMainWindow):
         widget = self.tabs.widget(index)
         if widget and isinstance(widget, BrowserTab):
             widget.web_page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+            self.update_zoom_display()  # Update zoom display when switching tabs
 
     def handle_settings_change(self):
         self.load_user_settings()
@@ -1914,8 +2533,7 @@ class PyBrowse(QtWidgets.QMainWindow):
             ))
             self.completer_model.setStringList(self.local_urls)
             
-            # force completer refresh
-            self.completer.complete()
+            # Model updated, completer will show suggestions when user types
         except Exception as e:
             print(f"Completer error: {e}")
 
@@ -1956,7 +2574,7 @@ class PyBrowse(QtWidgets.QMainWindow):
     
     def handle_online_suggestions(self, reply, original_query):
         try:
-            if reply.error() == QNetworkReply.NoError:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
                 data = bytes(reply.readAll()).decode('utf-8')
                 online_suggestions = json.loads(data)[1]
                 
@@ -1990,6 +2608,10 @@ class PyBrowse(QtWidgets.QMainWindow):
         tab.titleChanged.connect(self.update_tab_title)
         tab.urlChanged.connect(self.on_url_changed)
         self.tabs.setCurrentIndex(tab_index)
+        tab.setFocus()  # Set focus to the web view instead of URL bar
+
+        # Connect loading progress
+        tab.page().loadProgress.connect(self.show_loading_progress)
 
         self.suppress_autocomplete = False
         
@@ -2026,19 +2648,19 @@ class PyBrowse(QtWidgets.QMainWindow):
     def set_application_style(self):
         QtWidgets.QApplication.setStyle(QStyleFactory.create("Fusion"))
         dark_palette = QtGui.QPalette()
-        dark_palette.setColor(QtGui.QPalette.Window, QtGui.QColor(53, 53, 53))
-        dark_palette.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
-        dark_palette.setColor(QtGui.QPalette.Base, QtGui.QColor(25, 25, 25))
-        dark_palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(53, 53, 53))
-        dark_palette.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
-        dark_palette.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
-        dark_palette.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
-        dark_palette.setColor(QtGui.QPalette.Button, QtGui.QColor(53, 53, 53))
-        dark_palette.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
-        dark_palette.setColor(QtGui.QPalette.BrightText, QtCore.Qt.red)
-        dark_palette.setColor(QtGui.QPalette.Link, QtGui.QColor(42, 130, 218))
-        dark_palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(42, 130, 218))
-        dark_palette.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor(53, 53, 53))
+        dark_palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtCore.Qt.GlobalColor.white)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor(25, 25, 25))
+        dark_palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor(53, 53, 53))
+        dark_palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtCore.Qt.GlobalColor.white)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtCore.Qt.GlobalColor.white)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.Text, QtCore.Qt.GlobalColor.white)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor(53, 53, 53))
+        dark_palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtCore.Qt.GlobalColor.white)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtCore.Qt.GlobalColor.red)
+        dark_palette.setColor(QtGui.QPalette.ColorRole.Link, QtGui.QColor(42, 130, 218))
+        dark_palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor(42, 130, 218))
+        dark_palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtCore.Qt.GlobalColor.black)
         QtWidgets.QApplication.setPalette(dark_palette)
         self.setStyleSheet("""
             QToolBar {
@@ -2066,15 +2688,16 @@ class PyBrowse(QtWidgets.QMainWindow):
 
     def create_navigation_bar(self):
         self.navigation_bar = QtWidgets.QToolBar("Main Navigation")
-        self.addToolBar(QtCore.Qt.TopToolBarArea, self.navigation_bar)
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.navigation_bar)
         self.navigation_bar.setMovable(False)
         self.navigation_bar.setIconSize(QtCore.QSize(24, 24))
 
-        # Navigation controls
+        # Navigation controls with home button
         controls = [
             ('back', 'Back', self.go_back, 'back.svg'),
             ('forward', 'Forward', self.go_forward, 'forward.svg'),
             ('reload', 'Reload', self.reload_page, 'reload.svg'),
+            ('home', 'Home', self.go_home, 'home.svg'),
             ('new_tab', 'New Tab', lambda: self.add_new_tab(), 'new_tab.svg'),
             ('private', 'Private Mode', self.toggle_private_mode, 'private.svg'),
             ('downloads', 'Downloads', self.open_download_manager, 'download.svg'),
@@ -2093,7 +2716,29 @@ class PyBrowse(QtWidgets.QMainWindow):
                 self.private_mode_action = btn
             self.navigation_bar.addAction(btn)
 
-        # URL Bar with improved search handling
+        # URL Bar with enhanced design and security indicator
+        self.url_bar_container = QtWidgets.QWidget()
+        self.url_bar_container.setStyleSheet("""
+            QWidget {
+                background: white;
+                border: 1px solid #dee2e6;
+                border-radius: 25px;
+                padding: 2px;
+                margin: 0 8px;
+            }
+        """)
+
+        url_bar_layout = QtWidgets.QHBoxLayout(self.url_bar_container)
+        url_bar_layout.setContentsMargins(12, 6, 12, 6)
+        url_bar_layout.setSpacing(8)
+
+        # Security indicator
+        self.security_indicator = QtWidgets.QLabel()
+        self.security_indicator.setFixedSize(16, 16)
+        self.security_indicator.setStyleSheet("color: #6c757d;")
+        url_bar_layout.addWidget(self.security_indicator)
+
+        # URL input field
         self.url_bar = QLineEdit()
         self.url_bar.textEdited.connect(self.handle_user_typing)
         self.url_bar.focusInEvent = self.url_bar_focused
@@ -2101,61 +2746,268 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.url_bar.setClearButtonEnabled(True)
         self.url_bar.setMinimumWidth(400)
         self.url_bar.returnPressed.connect(self.navigate_to_url)
-        self.navigation_bar.addWidget(self.url_bar)
+        self.url_bar.setStyleSheet("""
+            QLineEdit {
+                border: none;
+                background: transparent;
+                font-size: 14px;
+                padding: 4px 0;
+                selection-background-color: #e2e6ea;
+            }
+            QLineEdit:focus {
+                outline: none;
+            }
+        """)
+        url_bar_layout.addWidget(self.url_bar, 1)
 
-        # Visual styling
+        # Loading progress indicator
+        self.loading_progress = QtWidgets.QProgressBar()
+        self.loading_progress.setFixedHeight(2)
+        self.loading_progress.setStyleSheet("""
+            QProgressBar {
+                background: transparent;
+                border: none;
+                border-radius: 1px;
+            }
+            QProgressBar::chunk {
+                background: #0078d4;
+                border-radius: 1px;
+            }
+        """)
+        self.loading_progress.setVisible(False)
+        self.loading_progress.setRange(0, 100)
+        self.loading_progress.setValue(0)
+
+        # Container for URL bar and progress
+        url_container = QtWidgets.QWidget()
+        url_container_layout = QtWidgets.QVBoxLayout(url_container)
+        url_container_layout.setContentsMargins(0, 0, 0, 0)
+        url_container_layout.setSpacing(0)
+        url_container_layout.addWidget(self.url_bar_container)
+        url_container_layout.addWidget(self.loading_progress)
+
+        self.navigation_bar.addWidget(url_container)
+
+        # Visual styling with modern design
         self.navigation_bar.setStyleSheet("""
             QToolBar {
-                background: #f8f9fa;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(255, 255, 255, 240), stop:1 rgba(248, 249, 250, 240));
                 border-bottom: 1px solid #dee2e6;
-                padding: 4px 8px;
+                padding: 8px 16px;
+                spacing: 4px;
             }
             QToolButton {
-                padding: 6px 8px;
-                background: transparent;
-                border-radius: 4px;
-                transition: background 0.2s ease;
+                padding: 8px;
+                background: rgba(255, 255, 255, 0.7);
+                border: 1px solid rgba(222, 226, 230, 0.5);
+                border-radius: 8px;
+                font-weight: 500;
             }
             QToolButton:hover {
-                background: rgba(233, 236, 239, 0.6);
+                background: rgba(255, 255, 255, 0.9);
+                border-color: #adb5bd;
             }
             QToolButton:pressed {
-                background: rgba(206, 212, 218, 0.7);
+                background: #dee2e6;
             }
             QToolButton[checked="true"] {
-                background: rgba(206, 212, 218, 0.5);
+                background: #0078d4;
+                color: white;
+                border-color: #005a9e;
+            }
+            QToolButton[checked="true"]:hover {
+                background: #005a9e;
             }
         """)
 
+        # Apply modern theme to completer popup
+        theme = DesignSystem.get_theme()
         self.completer.popup().setStyleSheet(f"""
             QListView {{
-                background: {self.url_bar.palette().base().color().name()};
-                border: 1px solid {self.url_bar.palette().mid().color().name()};
-                border-radius: 0;
-                padding: 0;
+                background: {theme['surface_elevated']};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+                padding: 4px;
                 font: {self.url_bar.font().toString()};
-                color: {self.url_bar.palette().text().color().name()};
+                color: {theme['text_primary']};
             }}
             QListView::item {{
-                padding: 8px 16px;
-                margin: 0;
+                padding: 10px 16px;
+                margin: 2px 0;
+                border-radius: 6px;
             }}
             QListView::item:hover {{
-                background: {self.url_bar.palette().alternateBase().color().name()};
+                background: {theme['surface_variant']};
             }}
             QListView::item:selected {{
-                background: {self.url_bar.palette().highlight().color().name()};
-                color: {self.url_bar.palette().highlightedText().color().name()};
-                border-radius: 0;
+                background: {theme['accent']};
+                color: white;
+                border-radius: 6px;
             }}
         """)
     
         self.completer = QCompleter(self.url_bar)
-        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
-        self.completer.setFilterMode(Qt.MatchContains)
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.completer.setModel(self.completer_model)
         self.url_bar.setCompleter(self.completer)
         self.url_bar.textChanged.connect(self.handle_text_changes)
+    
+    def create_status_bar(self):
+        """Create a modern status bar with page information."""
+        theme = DesignSystem.get_theme()
+        
+        self.status_bar = self.statusBar()
+        self.status_bar.setStyleSheet(f"""
+            QStatusBar {{
+                background: {theme['statusbar_bg']};
+                border-top: 1px solid {theme['border']};
+                padding: 6px 16px;
+                font-size: 12px;
+            }}
+            QLabel {{
+                color: {theme['text_secondary']};
+                padding: 2px 8px;
+            }}
+        """)
+        
+        # Page info label
+        self.page_info_label = QtWidgets.QLabel("Ready")
+        self.page_info_label.setStyleSheet(f"color: {theme['text_secondary']}; font-weight: 500;")
+        self.status_bar.addWidget(self.page_info_label)
+        
+        # Zoom controls
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.setSpacing(6)
+        
+        self.zoom_out_btn = QtWidgets.QPushButton("-")
+        self.zoom_out_btn.setFixedSize(28, 28)
+        self.zoom_out_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme['surface_variant']};
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                font-weight: bold;
+                color: {theme['text_primary']};
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background: {theme['surface']};
+                border-color: {theme['accent']};
+            }}
+            QPushButton:pressed {{
+                background: {theme['accent']};
+                color: white;
+            }}
+        """)
+        self.zoom_out_btn.clicked.connect(lambda: self.zoom_page(-0.1))
+        
+        self.zoom_level_label = QtWidgets.QLabel("100%")
+        self.zoom_level_label.setStyleSheet(f"color: {theme['text_primary']}; font-weight: 600; min-width: 48px; font-size: 13px;")
+        self.zoom_level_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        
+        self.zoom_in_btn = QtWidgets.QPushButton("+")
+        self.zoom_in_btn.setFixedSize(28, 28)
+        self.zoom_in_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme['surface_variant']};
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                font-weight: bold;
+                color: {theme['text_primary']};
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background: {theme['surface']};
+                border-color: {theme['accent']};
+            }}
+            QPushButton:pressed {{
+                background: {theme['accent']};
+                color: white;
+            }}
+        """)
+        self.zoom_in_btn.clicked.connect(lambda: self.zoom_page(0.1))
+        
+        zoom_layout.addWidget(self.zoom_out_btn)
+        zoom_layout.addWidget(self.zoom_level_label)
+        zoom_layout.addWidget(self.zoom_in_btn)
+        
+        zoom_widget = QtWidgets.QWidget()
+        zoom_widget.setLayout(zoom_layout)
+        self.status_bar.addPermanentWidget(zoom_widget)
+        
+        # Update initial zoom level
+        self.update_zoom_display()
+    
+    def refresh_status_bar_theme(self):
+        """Refresh status bar theme when system theme changes."""
+        theme = DesignSystem.get_theme()
+        
+        self.status_bar.setStyleSheet(f"""
+            QStatusBar {{
+                background: {theme['statusbar_bg']};
+                border-top: 1px solid {theme['border']};
+                padding: 6px 16px;
+                font-size: 12px;
+            }}
+            QLabel {{
+                color: {theme['text_secondary']};
+                padding: 2px 8px;
+            }}
+        """)
+        
+        self.page_info_label.setStyleSheet(f"color: {theme['text_secondary']}; font-weight: 500;")
+        self.zoom_level_label.setStyleSheet(f"color: {theme['text_primary']}; font-weight: 600; min-width: 48px; font-size: 13px;")
+        
+        zoom_btn_style = f"""
+            QPushButton {{
+                background: {theme['surface_variant']};
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                font-weight: bold;
+                color: {theme['text_primary']};
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background: {theme['surface']};
+                border-color: {theme['accent']};
+            }}
+            QPushButton:pressed {{
+                background: {theme['accent']};
+                color: white;
+            }}
+        """
+        
+        self.zoom_out_btn.setStyleSheet(zoom_btn_style)
+        self.zoom_in_btn.setStyleSheet(zoom_btn_style)
+    
+    def update_zoom_display(self):
+        """Update the zoom level display in status bar."""
+        try:
+            current_tab = self.tabs.currentWidget()
+            if isinstance(current_tab, BrowserTab):
+                zoom_factor = current_tab.zoomFactor()
+                zoom_percent = int(zoom_factor * 100)
+                self.zoom_level_label.setText(f"{zoom_percent}%")
+        except:
+            self.zoom_level_label.setText("100%")
+    
+    def zoom_page(self, factor):
+        """Zoom the current page by the given factor."""
+        try:
+            current_tab = self.tabs.currentWidget()
+            if isinstance(current_tab, BrowserTab):
+                current_zoom = current_tab.zoomFactor()
+                new_zoom = max(0.25, min(5.0, current_zoom + factor))  # Limit zoom between 25% and 500%
+                current_tab.setZoomFactor(new_zoom)
+                self.update_zoom_display()
+        except Exception as e:
+            print(f"Zoom error: {e}")
+    
+    def update_page_info(self, message):
+        """Update the page information in status bar."""
+        self.page_info_label.setText(message)
     
     def handle_user_typing(self):
         if not self.suppress_autocomplete:
@@ -2167,8 +3019,7 @@ class PyBrowse(QtWidgets.QMainWindow):
 
     def url_bar_focused(self, event):
         QtWidgets.QLineEdit.focusInEvent(self.url_bar, event)
-        if self.url_bar.text():
-            self.completer.complete()
+        # Don't automatically show completer on focus - only when user types
     
     def open_dev_tools(self):
         QtWidgets.QMessageBox.information(
@@ -2192,7 +3043,7 @@ class PyBrowse(QtWidgets.QMainWindow):
             self.tabs.currentWidget().forward()
 
     def create_fullscreen_toggle(self):
-        self.fullscreen_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("F11"), self)
+        self.fullscreen_shortcut = QtGui.QShortcut(QtGui.QKeySequence("F11"), self)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
 
     def toggle_fullscreen(self):
@@ -2220,7 +3071,7 @@ class PyBrowse(QtWidgets.QMainWindow):
     def open_settings_dialog(self):
         dialog = SettingsDialog(self)
         dialog.settings_changed.connect(self.handle_settings_change)
-        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             dialog.save_settings()
     
     def refresh_tab_styles(self):
@@ -2239,7 +3090,7 @@ class PyBrowse(QtWidgets.QMainWindow):
 
     def show_about_dialog(self):
         dialog = AboutDialog(self)
-        dialog.exec_()
+        dialog.exec()
     
     def update_tab_title(self, title):
         tab = self.sender()  # get the tab that emitted the signal
@@ -2302,16 +3153,59 @@ class PyBrowse(QtWidgets.QMainWindow):
             return
         self.url_bar.setText(q.toString())
         self.url_bar.setCursorPosition(0)
+        self.update_security_indicator(q)
+
+    def update_security_indicator(self, url):
+        """Update the security indicator based on URL scheme and security."""
+        if isinstance(url, str):
+            url = QUrl(url)
+
+        if url.scheme() == 'https':
+            self.security_indicator.setText("🔒")
+            self.security_indicator.setToolTip("Secure connection (HTTPS)")
+            self.security_indicator.setStyleSheet("color: #28a745;")
+        elif url.scheme() == 'http':
+            self.security_indicator.setText("⚠️")
+            self.security_indicator.setToolTip("Insecure connection (HTTP)")
+            self.security_indicator.setStyleSheet("color: #ffc107;")
+        else:
+            self.security_indicator.setText("ℹ️")
+            self.security_indicator.setToolTip("Local or special page")
+            self.security_indicator.setStyleSheet("color: #6c757d;")
+
+    def show_loading_progress(self, progress):
+        """Show loading progress in the URL bar."""
+        if progress < 100:
+            self.loading_progress.setVisible(True)
+            self.loading_progress.setValue(progress)
+        else:
+            self.loading_progress.setVisible(False)
+            self.loading_progress.setValue(0)
 
     def go_back(self):
         """Go back in the history of the current tab."""
         if self.tabs.count() > 0:
             self.tabs.currentWidget().back()
 
+    def go_home(self):
+        """Navigate to the home page."""
+        if self.tabs.count() > 0:
+            self.tabs.currentWidget().setUrl(QUrl("https://www.google.com"))
+
     def reload_page(self):
         """Reload the current page in the active tab."""
         if self.tabs.count() > 0:
             self.tabs.currentWidget().reload()
+
+    def reset_zoom(self):
+        """Reset zoom to 100%."""
+        try:
+            current_tab = self.tabs.currentWidget()
+            if isinstance(current_tab, BrowserTab):
+                current_tab.setZoomFactor(1.0)
+                self.update_zoom_display()
+        except Exception as e:
+            print(f"Reset zoom error: {e}")
 
     def open_history_page(self):
         """Open a new tab with the browsing history."""
@@ -2410,7 +3304,7 @@ class PyBrowse(QtWidgets.QMainWindow):
                         self.history.append(entry)
 
     def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key_Escape and self.is_fullscreen:
+        if event.key() == QtCore.Qt.Key.Key_Escape and self.is_fullscreen:
             self.toggle_fullscreen()
         else:
             super().keyPressEvent(event)
@@ -2430,7 +3324,7 @@ class PyBrowse(QtWidgets.QMainWindow):
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if isinstance(tab, BrowserTab):
-                tab.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu if enabled else QtCore.Qt.NoContextMenu)
+                tab.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.DefaultContextMenu if enabled else QtCore.Qt.ContextMenuPolicy.NoContextMenu)
     
     # To also prevent memory leaks and such 
     def closeEvent(self, event):
@@ -2457,8 +3351,6 @@ class PyBrowse(QtWidgets.QMainWindow):
     def delayed_cleanup(self):
         self.tabs.deleteLater()
         self.close()
-    
-
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
@@ -2467,4 +3359,4 @@ if __name__ == "__main__":
     QtCore.QCoreApplication.setApplicationName("PyBrowse")
     window = PyBrowse()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
