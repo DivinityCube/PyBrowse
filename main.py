@@ -41,9 +41,8 @@ class DownloadItemWidget(QtWidgets.QWidget):
         self.filename = QtWidgets.QLabel()
         self.set_elided_text(self.filename, self.download_info['file_name'], 300)
         
-        self.status_label = QtWidgets.QLabel()
-        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
-        layout.insertWidget(0, self.status_label)
+        self.status = QtWidgets.QLabel()
+        self.status.setAlignment(QtCore.Qt.AlignCenter)
         
         content_layout.addWidget(self.filename)
         content_layout.addWidget(self.status)
@@ -462,11 +461,14 @@ class CustomNewTabPage(QWidget):
 class TextToSpeechEngine(QRunnable):
     def __init__(self, text, finished_callback):
         super().__init__()
-        self.engine = pyttsx3.init()
+        self.engine = None  # lazy init
         self.text = text
         self.finished_callback = finished_callback
 
     def run(self):
+        # initialize engine only when needed
+        if self.engine is None:
+            self.engine = pyttsx3.init()
         self.engine.say(self.text)
         self.engine.runAndWait()
         self.finished_callback()
@@ -686,67 +688,7 @@ class AccessibilityPage(QtWidgets.QWidget):
             layout.addWidget(label)
         layout.addSpacing(10)
 
-class DownloadManager(QtWidgets.QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.init_ui()
-        self.network_manager = QNetworkAccessManager()
-        self.network_manager.finished.connect(self.download_finished)
-        self.downloads = {}
-        print("DownloadManager initialized")
 
-    def init_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        self.download_list = QtWidgets.QListWidget()
-        layout.addWidget(self.download_list)
-
-    def add_download(self, url):
-        print(f"Adding download for URL: {url}")
-        url = QUrl(url)
-        file_info = QFileInfo(url.path())
-        file_name = file_info.fileName()
-        if not file_name:
-            file_name = "download"
-        save_path, _ = QFileDialog.getSaveFileName(self, "Save File", QDir.homePath() + "/Downloads/" + file_name)
-        if save_path:
-            print(f"Saving file to: {save_path}")
-            request = QNetworkRequest(url)
-            reply = self.network_manager.get(request)
-            item = QListWidgetItem(f"Downloading: {file_name}")
-            self.download_list.addItem(item)
-            progress_bar = QProgressBar(self.download_list)
-            self.download_list.setItemWidget(item, progress_bar)
-            self.downloads[reply] = {
-                "item": item,
-                "progress_bar": progress_bar,
-                "file": open(save_path, "wb"),
-                "file_name": file_name
-            }
-            reply.downloadProgress.connect(lambda received, total, r=reply: self.update_progress(received, total, r))
-            reply.readyRead.connect(lambda r=reply: self.save_data(r))
-        else:
-            print("File save cancelled by user")
-
-    def update_progress(self, received, total, reply):
-        download = self.downloads.get(reply)
-        if download:
-            progress = int(received * 100 / total)
-            download["progress_bar"].setValue(progress)
-            download["item"].setText(f"Downloading: {download['file_name']} - {progress}%")
-
-    def save_data(self, reply):
-        download = self.downloads.get(reply)
-        if download:
-            download["file"].write(reply.readAll())
-
-    def download_finished(self, reply):
-        download = self.downloads.get(reply)
-        if download:
-            download["file"].close()
-            self.downloads.pop(reply)
-            download["item"].setText(f"Completed: {download['file_name']}")
-            download["progress_bar"].setValue(100)
-        reply.deleteLater()
 
 class AdBlocker(QWebEngineUrlRequestInterceptor):
     def __init__(self, parent=None):
@@ -768,10 +710,14 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
     def is_cache_valid(self):
         if not os.path.exists(self.cache_file):
             return False
-        with open(self.cache_file, 'r') as f:
-            cache = json.load(f)
-        last_updated = datetime.fromisoformat(cache['last_updated'])
-        return datetime.now() - last_updated < self.cache_duration
+        try:
+            with open(self.cache_file, 'r') as f:
+                cache = json.load(f)
+            last_updated = datetime.fromisoformat(cache['last_updated'])
+            return datetime.now() - last_updated < self.cache_duration
+        except (json.JSONDecodeError, KeyError, ValueError):
+            # invalid cache file, return False to trigger reload
+            return False
 
     def load_from_cache(self):
         with open(self.cache_file, 'r') as f:
@@ -832,10 +778,20 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
             info.block(True)
 
     def should_block_ad(self, url):
-        return any(url.host().endswith(host) for host in self.ad_hosts)
+        host = url.host()
+        # direct lookup first (fastest)
+        if host in self.ad_hosts:
+            return True
+        # check parent domains
+        return any(host.endswith('.' + ad_host) for ad_host in self.ad_hosts)
 
     def should_block_tracker(self, url):
-        return any(url.host().endswith(host) for host in self.tracker_hosts)
+        host = url.host()
+        # direct lookup first (fastest)
+        if host in self.tracker_hosts:
+            return True
+        # check parent domains
+        return any(host.endswith('.' + tracker_host) for tracker_host in self.tracker_hosts)
 
 # TODO: This new tab overhaul is very sloppy. I don't feel like this code is super polished and there are probably some gaping holes I'm too tired to fix, or even spot. Maybe in some future version I'll go over this code again
 class ScrollableTabBar(QtWidgets.QTabBar):
@@ -912,11 +868,18 @@ class ScrollableTabBar(QtWidgets.QTabBar):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         
+        # cache pen and color for reuse
+        text_color = self.palette().text().color()
+        pen = QtGui.QPen(text_color)
+        pen.setWidthF(1.8)
+        offset = 3
+        
         for index in range(self.count()):
             rect = self.tabRect(index)
+            center_y = rect.center().y()
             close_rect = QtCore.QRect(
                 rect.right() - 24,  # Adjusted positioning
-                rect.center().y() - 6,
+                center_y - 6,
                 16,
                 16
             )
@@ -927,23 +890,18 @@ class ScrollableTabBar(QtWidgets.QTabBar):
                 painter.setPen(QtCore.Qt.NoPen)
                 painter.drawEllipse(close_rect.center(), 8, 8)
             
-            # X icon
-            pen = QtGui.QPen(self.palette().text().color())
-            pen.setWidthF(1.8)
+            # X icon - use cached pen
             painter.setPen(pen)
+            center_x = close_rect.center().x()
+            center_y = close_rect.center().y()
             
-            offset = 3
             painter.drawLine(
-                close_rect.center().x() - offset,
-                close_rect.center().y() - offset,
-                close_rect.center().x() + offset,
-                close_rect.center().y() + offset
+                center_x - offset, center_y - offset,
+                center_x + offset, center_y + offset
             )
             painter.drawLine(
-                close_rect.center().x() + offset,
-                close_rect.center().y() - offset,
-                close_rect.center().x() - offset,
-                close_rect.center().y() + offset
+                center_x + offset, center_y - offset,
+                center_x - offset, center_y + offset
             )
 
     def mouseMoveEvent(self, event):
@@ -1024,26 +982,31 @@ class ScrollableTabBar(QtWidgets.QTabBar):
             self.update()
 
     def tabSizeHint(self, index):
-        # Calculate available width minus scroll buttons if needed
-        available_width = self.width() - 20  # Account for scroll buttons
-        tab_count = max(1, self.count())
+        # cache calculations to avoid repeated computation
+        if not hasattr(self, '_cached_tab_count') or self._cached_tab_count != self.count():
+            self._cached_tab_count = self.count()
+            self._cached_available_width = self.width() - 20  # Account for scroll buttons
+            tab_count = max(1, self._cached_tab_count)
+            
+            # Calculate ideal width based on available space
+            ideal_width = self._cached_available_width / tab_count
+            self._cached_ideal_width = max(self._min_tab_width, 
+                            min(ideal_width, self._max_tab_width))
+            
+            # Check if we actually need scroll buttons
+            self._needs_scroll = (self._cached_ideal_width * tab_count) > self._cached_available_width
         
-        # Calculate ideal width based on available space
-        ideal_width = available_width / tab_count
-        ideal_width = max(self._min_tab_width, 
-                        min(ideal_width, self._max_tab_width))
+        height = super().tabSizeHint(index).height()
         
-        # Check if we actually need scroll buttons
-        if (ideal_width * tab_count) <= available_width:
+        if not self._needs_scroll:
             # Expand tabs to fill available space
             return QtCore.QSize(
-                int(available_width / tab_count),
-                super().tabSizeHint(index).height()
+                int(self._cached_available_width / self._cached_tab_count),
+                height
             )
         else:
             # Use consistent minimum width with scroll
-            return QtCore.QSize(self._min_tab_width, 
-                              super().tabSizeHint(index).height())
+            return QtCore.QSize(self._min_tab_width, height)
     
     def minimumTabSizeHint(self, index):
         return QtCore.QSize(self._min_tab_width, 
@@ -1143,22 +1106,19 @@ class BrowserTab(QWebEngineView):
         local_pos = event.pos()
         global_pos = event.globalPos()
         
-        js_code = f"""
-            (function() {{
-                try {{
-                    var elem = document.elementFromPoint({local_pos.x()}, {local_pos.y()});
+        # optimize js execution by minimizing string formatting
+        js_code = """
+            (function() {
+                try {
+                    var elem = document.elementFromPoint(%d, %d);
                     if (!elem) return null;
                     var img = elem.closest('img');
-                    return img ? {{
-                        src: img.src,
-                        x: img.getBoundingClientRect().left + window.scrollX,
-                        y: img.getBoundingClientRect().top + window.scrollY
-                    }} : null;
-                }} catch(e) {{
+                    return img ? {src: img.src, x: img.getBoundingClientRect().left + window.scrollX, y: img.getBoundingClientRect().top + window.scrollY} : null;
+                } catch(e) {
                     return null;
-                }}
-            }})()
-        """
+                }
+            })()
+        """ % (local_pos.x(), local_pos.y())
         
         def handle_result(result):
             menu = QMenu(self)
@@ -1545,7 +1505,9 @@ class HistoryPage(QtWidgets.QWidget):
 
     def load_history(self, history):
         self.history_list.clear()
-        for entry in reversed(history):
+        # iterate in reverse without creating a copy
+        for i in range(len(history) - 1, -1, -1):
+            entry = history[i]
             item = QtWidgets.QListWidgetItem()
             widget = HistoryItemWidget(entry)
             item.setSizeHint(widget.sizeHint())
@@ -1562,9 +1524,11 @@ class HistoryPage(QtWidgets.QWidget):
             item = self.history_list.item(i)
             widget = self.history_list.itemWidget(item)
             if widget and hasattr(widget, 'entry'):
-                url_match = search_text in widget.entry.get('url', '').lower()
-                title_match = search_text in widget.entry.get('title', '').lower()
-                item.setHidden(not (url_match or title_match))
+                entry = widget.entry
+                # combine checks for efficiency
+                is_match = (search_text in entry.get('url', '').lower() or 
+                           search_text in entry.get('title', '').lower())
+                item.setHidden(not is_match)
 
 
 class HistoryItemWidget(QtWidgets.QWidget):
@@ -1831,6 +1795,7 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.custom_search_engine = ""
         self.bookmarks = []
         self.history = []
+        self.local_urls = []  # cache for completer performance
         self.is_fullscreen = False
         self.default_profile = QWebEngineProfile.defaultProfile()
         self.default_profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
@@ -1907,11 +1872,14 @@ class PyBrowse(QtWidgets.QMainWindow):
     
     def update_completer_model(self):
         try:
-            # use list comprehension with explicit checks
-            self.local_urls = list(set(
-                entry.get('url', '') for entry in self.history + self.bookmarks
-                if isinstance(entry, dict) and 'url' in entry
-            ))
+            # use set comprehension for better performance
+            url_set = {
+                entry.get('url', '') 
+                for entry in self.history + self.bookmarks
+                if isinstance(entry, dict) and entry.get('url')
+            }
+            # remove empty strings and convert to sorted list
+            self.local_urls = sorted([url for url in url_set if url])
             self.completer_model.setStringList(self.local_urls)
             
             # force completer refresh
@@ -1929,9 +1897,11 @@ class PyBrowse(QtWidgets.QMainWindow):
             
             self.url_bar.setPlaceholderText("Search or enter address")
             
+            # optimize local search by using cached urls
+            query_lower = query.lower()
             local_matches = [
-                entry['url'] for entry in self.history + self.bookmarks
-                if query.lower() in entry.get('url', '').lower()
+                url for url in self.local_urls
+                if query_lower in url.lower()
             ][:5]
             
             self.completer_model.setStringList(local_matches)
@@ -2321,7 +2291,6 @@ class PyBrowse(QtWidgets.QMainWindow):
 
     def add_to_history(self, url):
         if not self.is_private_mode:
-
             current_tab = self.tabs.currentWidget()
             title = ""
             
@@ -2329,15 +2298,19 @@ class PyBrowse(QtWidgets.QMainWindow):
                 title = current_tab.page().title()
             else:
                 title = QUrl(url).host() or url[:50]  # use domain or first 50 chars
-                
-            self.history.append({
-                'url': url,
-                'title': title,
-                'timestamp': datetime.now().isoformat()
-            })
-            self.history = self.history[-500:]  # keep only last 500 entries
-            self.save_history()
-            self.update_completer_model()
+            
+            # avoid duplicate consecutive entries
+            if not self.history or self.history[-1].get('url') != url:
+                self.history.append({
+                    'url': url,
+                    'title': title,
+                    'timestamp': datetime.now().isoformat()
+                })
+                # trim history if it exceeds limit
+                if len(self.history) > 500:
+                    self.history = self.history[-500:]
+                self.save_history()
+                self.update_completer_model()
 
     def add_bookmark(self):
         current_tab = self.tabs.currentWidget()
