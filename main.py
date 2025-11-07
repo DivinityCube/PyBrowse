@@ -2169,10 +2169,16 @@ class PyBrowse(QtWidgets.QMainWindow):
         if not self.is_fullscreen:
             self.showFullScreen()
             self.is_fullscreen = True
+            # Hide navigation bar in fullscreen to prevent visual artifacts
+            self.navigation_bar.hide()
         else:
             self.showNormal()
             self.is_fullscreen = False
-        self.central_widget.setGeometry(self.rect())
+            # Show navigation bar when exiting fullscreen
+            self.navigation_bar.show()
+        
+        # Let Qt handle geometry automatically
+        self.update()
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
