@@ -461,11 +461,14 @@ class CustomNewTabPage(QWidget):
 class TextToSpeechEngine(QRunnable):
     def __init__(self, text, finished_callback):
         super().__init__()
-        self.engine = pyttsx3.init()
+        self.engine = None  # lazy init
         self.text = text
         self.finished_callback = finished_callback
 
     def run(self):
+        # initialize engine only when needed
+        if self.engine is None:
+            self.engine = pyttsx3.init()
         self.engine.say(self.text)
         self.engine.runAndWait()
         self.finished_callback()
@@ -775,10 +778,20 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
             info.block(True)
 
     def should_block_ad(self, url):
-        return any(url.host().endswith(host) for host in self.ad_hosts)
+        host = url.host()
+        # direct lookup first (fastest)
+        if host in self.ad_hosts:
+            return True
+        # check parent domains
+        return any(host.endswith('.' + ad_host) for ad_host in self.ad_hosts)
 
     def should_block_tracker(self, url):
-        return any(url.host().endswith(host) for host in self.tracker_hosts)
+        host = url.host()
+        # direct lookup first (fastest)
+        if host in self.tracker_hosts:
+            return True
+        # check parent domains
+        return any(host.endswith('.' + tracker_host) for tracker_host in self.tracker_hosts)
 
 # TODO: This new tab overhaul is very sloppy. I don't feel like this code is super polished and there are probably some gaping holes I'm too tired to fix, or even spot. Maybe in some future version I'll go over this code again
 class ScrollableTabBar(QtWidgets.QTabBar):
@@ -969,26 +982,31 @@ class ScrollableTabBar(QtWidgets.QTabBar):
             self.update()
 
     def tabSizeHint(self, index):
-        # Calculate available width minus scroll buttons if needed
-        available_width = self.width() - 20  # Account for scroll buttons
-        tab_count = max(1, self.count())
+        # cache calculations to avoid repeated computation
+        if not hasattr(self, '_cached_tab_count') or self._cached_tab_count != self.count():
+            self._cached_tab_count = self.count()
+            self._cached_available_width = self.width() - 20  # Account for scroll buttons
+            tab_count = max(1, self._cached_tab_count)
+            
+            # Calculate ideal width based on available space
+            ideal_width = self._cached_available_width / tab_count
+            self._cached_ideal_width = max(self._min_tab_width, 
+                            min(ideal_width, self._max_tab_width))
+            
+            # Check if we actually need scroll buttons
+            self._needs_scroll = (self._cached_ideal_width * tab_count) > self._cached_available_width
         
-        # Calculate ideal width based on available space
-        ideal_width = available_width / tab_count
-        ideal_width = max(self._min_tab_width, 
-                        min(ideal_width, self._max_tab_width))
+        height = super().tabSizeHint(index).height()
         
-        # Check if we actually need scroll buttons
-        if (ideal_width * tab_count) <= available_width:
+        if not self._needs_scroll:
             # Expand tabs to fill available space
             return QtCore.QSize(
-                int(available_width / tab_count),
-                super().tabSizeHint(index).height()
+                int(self._cached_available_width / self._cached_tab_count),
+                height
             )
         else:
             # Use consistent minimum width with scroll
-            return QtCore.QSize(self._min_tab_width, 
-                              super().tabSizeHint(index).height())
+            return QtCore.QSize(self._min_tab_width, height)
     
     def minimumTabSizeHint(self, index):
         return QtCore.QSize(self._min_tab_width, 
@@ -1506,9 +1524,11 @@ class HistoryPage(QtWidgets.QWidget):
             item = self.history_list.item(i)
             widget = self.history_list.itemWidget(item)
             if widget and hasattr(widget, 'entry'):
-                url_match = search_text in widget.entry.get('url', '').lower()
-                title_match = search_text in widget.entry.get('title', '').lower()
-                item.setHidden(not (url_match or title_match))
+                entry = widget.entry
+                # combine checks for efficiency
+                is_match = (search_text in entry.get('url', '').lower() or 
+                           search_text in entry.get('title', '').lower())
+                item.setHidden(not is_match)
 
 
 class HistoryItemWidget(QtWidgets.QWidget):
