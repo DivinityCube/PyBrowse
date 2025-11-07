@@ -1021,11 +1021,14 @@ class TabWidget(QtWidgets.QTabWidget):
         self.tabCloseRequested.connect(self.close_tab)
         self.overflow_menu = QtWidgets.QMenu(self)
         self.setDocumentMode(True)
+        # Prevent flickering during tab switches
+        self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent, True)
         self.setStyleSheet("""
             QTabWidget::pane {
                 border: none;
                 margin: 0;
                 padding: 0;
+                background: #ffffff;
             }
             
             QTabWidget::tab-bar {
@@ -1067,6 +1070,9 @@ class BrowserTab(QWebEngineView):
         self.settings().setAttribute(
             QWebEngineSettings.LocalStorageEnabled, True
         )
+        # Prevent flickering on high refresh rate displays
+        self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent, True)
+        self.setAttribute(QtCore.Qt.WA_NoSystemBackground, False)
         self.image_url = None
         self.profile = profile or QWebEngineProfile.defaultProfile()
         self.web_page = QWebEnginePage(self.profile, self)
@@ -1852,16 +1858,7 @@ class PyBrowse(QtWidgets.QMainWindow):
     def activate_current_tab(self, index):
         widget = self.tabs.widget(index)
         if widget and isinstance(widget, BrowserTab):
-            # Prevent flickering in fullscreen mode by temporarily disabling updates
-            if self.is_fullscreen:
-                self.setUpdatesEnabled(False)
-                try:
-                    widget.web_page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
-                finally:
-                    # Re-enable updates after tab switch completes
-                    QtCore.QTimer.singleShot(0, lambda: self.setUpdatesEnabled(True))
-            else:
-                widget.web_page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+            widget.web_page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
 
     def handle_settings_change(self):
         self.load_user_settings()
@@ -2175,20 +2172,13 @@ class PyBrowse(QtWidgets.QMainWindow):
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
 
     def toggle_fullscreen(self):
-        # Disable updates during fullscreen transition to prevent flickering
-        self.setUpdatesEnabled(False)
-        try:
-            if not self.is_fullscreen:
-                self.showFullScreen()
-                self.is_fullscreen = True
-            else:
-                self.showNormal()
-                self.is_fullscreen = False
-            
-            self.central_widget.setGeometry(self.rect())
-        finally:
-            # Re-enable updates after geometry is set
-            QtCore.QTimer.singleShot(0, lambda: self.setUpdatesEnabled(True))
+        if not self.is_fullscreen:
+            self.showFullScreen()
+            self.is_fullscreen = True
+        else:
+            self.showNormal()
+            self.is_fullscreen = False
+        self.central_widget.setGeometry(self.rect())
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
